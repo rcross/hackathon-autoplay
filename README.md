@@ -19,14 +19,18 @@ Open **`hackathon-videos.html`** in Chrome (double-click it, or drag it onto Chr
 2. **Playlists.** All Machine Learning tasks (task name contains "Machine Learning" or "ML") go in Playlist 1. Other tasks are placed to balance the two sizes. Click **move** on any task to change it. Your changes are remembered.
 3. **Video link check.** Runs automatically. Each link is tested the same way the playlist page will use it:
    - **ready**: plays, and can be pre-downloaded
-   - **streams only**: plays, but the host (e.g. Google Drive) blocks pre-downloading, or it's a YouTube link. It needs internet during judging and may buffer.
-   - **problem**: not public, opens a web page instead of a video, not found, a format the browser can't play, or no link
+   - **streams only**: plays, but the host blocks pre-downloading (Google Drive without an API key), or it's a YouTube link. It needs internet during judging.
+   - **problem**: not public, opens a web page instead of a video, not found, a Drive folder or other non-video file, a deleted YouTube video, a format the browser can't play, or no link. These teams get a "not working" card during judging (see below).
    - Videos longer than 60 s are flagged too (wrong video submitted?)
 4. **Save** Playlist 1, Playlist 2 and the running order. They go to your Downloads folder with the date and time in the name, so earlier versions are never overwritten.
 
 When teams fix their links, reload the responses and save again.
 
-**Most reliable host:** a file in a public GitHub repo, or Dropbox. Both can be pre-downloaded. Share links from GitHub, Google Drive, Dropbox and OneDrive/SharePoint are converted to direct links automatically.
+**Supported links:** direct `.mp4`/`.webm` links, GitHub, Dropbox, OneDrive/SharePoint, Google Drive and YouTube. Share links are converted to direct links automatically.
+
+**Google Drive.** Drive videos stream during judging, as long as the file is shared as "Anyone with the link". Streaming is usually fine with decent internet. To pre-download Drive videos too, paste a free **Google Drive API key** into step 1 (the page has 5-minute instructions). The key also makes the check more precise: it reports "not shared publicly", "not a video (PDF)" and so on. The key is saved inside the playlist files but can only read files that are already public. Delete it after the event.
+
+**YouTube.** YouTube videos play through YouTube's own player. The page sees when each one ends and moves on, and shows the "not working" card if the video is private, deleted or doesn't allow embedding. **Try one YouTube team on the judging computer before the event.** YouTube sometimes refuses to play embeds on a page opened from a file. If it does, those teams get the "not working" card and the playlist continues.
 
 ## 2. Play
 
@@ -35,6 +39,9 @@ Copy a saved playlist file to the judging computer and open it in Chrome or Edge
 - Videos start downloading straight away. Each one shows **waiting / % / ready / streams live / problem**, with a **retry** button for failures.
 - Click **Start** once everything shows *ready*. You can start earlier: anything not yet downloaded streams instead.
 - Keep the tab open. Videos are held by the tab, so reloading it downloads them again.
+- **After the one click on Start, it runs by itself to the end.** Browsers only allow sound after a click on the page, which is why one click is needed.
+- **A video that doesn't work** (broken link, or a stream that doesn't start within 20 s or stalls for 15 s) shows the team name and *"Sorry, this team's video isn't working"* for 6 s, then moves on to the next team with no scoring pause. If it breaks after at least 30 s of playing, the judges get the normal scoring pause instead.
+- Fully hands-free option: open the file with `#autostart` at the end of its address (e.g. `file:///C:/Users/me/Desktop/playlist-1.html#autostart`). It then starts by itself once downloads finish. Without a click, the browser may play videos muted.
 
 | Key | Action |
 |---|---|
@@ -45,6 +52,6 @@ Copy a saved playlist file to the judging computer and open it in Chrome or Edge
 | F | toggle fullscreen |
 | Esc | stop and return to the list (press twice if fullscreen) |
 
-Each team has a **start here** button, so you can resume partway through. The menu also has settings for the team-name time, the scoring pause (default 12 s) and the cut-off for overlong videos (default 60 s; 0 = never).
+Each team has a **start here** button, so you can resume partway through. The menu also has settings for the team-name time, the scoring pause (default 12 s), the "not working" message time (default 6 s) and the cut-off for overlong videos (default 60 s; 0 = never).
 
 **Tip:** check on the judging computer itself before the event. A video that plays on a Mac (e.g. an iPhone HEVC `.mov`) may not play in Chrome on Windows. Each team's status in the playlist list shows this.

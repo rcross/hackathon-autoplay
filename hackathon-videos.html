@@ -98,7 +98,7 @@
 
   /* ---------- stage ---------- */
   #stage { position: fixed; inset: 0; background: #000; }
-  #stage video, #stage iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; }
+  #stage video, #ytBox, #ytBox iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; }
   #stage video.preload { visibility: hidden; }
   .screen { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 5vh 6vw; background: var(--bg); }
   .eyebrow { color: var(--muted); font-size: clamp(16px, 2.2vw, 30px); letter-spacing: .08em; text-transform: uppercase; }
@@ -133,6 +133,29 @@
         <div class="muted" style="margin-top:6px">In the sheet: File → Download → Comma-separated values (.csv)</div>
       </div>
       <div class="msg" id="loadMsg"></div>
+
+      <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
+        <div class="row">
+          <input type="text" id="driveKey" spellcheck="false" autocomplete="off" placeholder="Google Drive API key (only needed for Google Drive links)">
+          <button class="btn" id="driveKeySave">Use key</button>
+        </div>
+        <details class="muted" style="margin-top:8px">
+          <summary style="cursor:pointer">Why a key, and how to get one (free, about 5 minutes)</summary>
+          <div style="margin-top:8px">
+            Google Drive won't let a web page download its files directly. With a Drive API key, the playlist pages can
+            pre-download Drive videos that are shared as <b>“Anyone with the link”</b>. The check also shows which teams haven't shared their file.
+            Without a key, Drive videos stream live during judging.
+            <ol style="margin:8px 0 0;padding-left:20px">
+              <li>Open <b>console.cloud.google.com</b>, sign in with any Google account and create a project (any name).</li>
+              <li><b>APIs &amp; Services → Library</b>: search for <b>Google Drive API</b> and click <b>Enable</b>.</li>
+              <li><b>APIs &amp; Services → Credentials → Create credentials → API key</b>. Copy the key and paste it above.</li>
+              <li>Recommended: edit the key, set <b>API restrictions → Restrict key → Google Drive API</b>, and save.</li>
+            </ol>
+            The key is saved inside the playlist files, but it can only read files that are already public. Delete it in the console after the event.
+          </div>
+        </details>
+        <div class="msg" id="keyMsg"></div>
+      </div>
     </div>
 
     <div class="card hidden" id="splitCard">
@@ -185,10 +208,12 @@
       <label>Team name shown for <input type="number" id="setTitle" min="1" max="60"> s</label>
       <label>Scoring pause <input type="number" id="setScore" min="1" max="120"> s</label>
       <label>Cut off videos after <input type="number" id="setMax" min="0" max="600"> s <span>(0 = never)</span></label>
+      <label>Broken-video message shown for <input type="number" id="setFail" min="1" max="60"> s</label>
     </div>
     <div class="keys">
       <kbd>Space</kbd> pause / resume &nbsp; <kbd>&rarr;</kbd> skip ahead &nbsp; <kbd>&larr;</kbd> back &nbsp;
       <kbd>R</kbd> replay this team's video &nbsp; <kbd>F</kbd> fullscreen &nbsp; <kbd>Esc</kbd> stop and return here<br>
+      Click <b>Start</b> once. After that every team plays automatically to the end; a broken video shows a short message and moves on.<br>
       Keep this tab open: closing or reloading it means downloading the videos again.
     </div>
   </div>
@@ -198,7 +223,7 @@
 <div id="stage" class="hidden">
   <video id="vA" playsinline preload="auto"></video>
   <video id="vB" playsinline preload="auto" class="preload"></video>
-  <iframe id="yt" class="hidden" allow="autoplay; encrypted-media; fullscreen"></iframe>
+  <div id="ytBox" class="hidden"><div id="yt"></div></div>
 
   <div id="titleScreen" class="screen hidden">
     <div class="eyebrow" id="titlePos"></div>
@@ -214,6 +239,16 @@
     <div class="note hidden" id="scoreNote"></div>
     <div class="next" id="scoreNext"></div>
     <div class="bar" id="scoreBar"></div>
+  </div>
+
+  <div id="failScreen" class="screen hidden">
+    <div class="eyebrow" id="failPos"></div>
+    <div class="team" id="failTeam"></div>
+    <div class="task" id="failTask"></div>
+    <div class="note" style="font-size:clamp(20px,3vw,44px);font-weight:700">Sorry &mdash; this team's video isn't working</div>
+    <div class="next" id="failWhy" style="font-size:clamp(13px,1.4vw,20px);margin-top:1vh"></div>
+    <div class="next" id="failNext"></div>
+    <div class="bar" id="failBar" style="background:var(--bad)"></div>
   </div>
 
   <div id="endScreen" class="screen hidden">
@@ -272,6 +307,24 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
     };
     $("prep").classList.remove("hidden");
     document.title = "Hackathon Videos - Prepare Playlists";
+
+    // ---------- Google Drive API key ----------
+    var driveKey = lsGet("prepDriveKey", "");
+    var keyProblem = null;     // set when Google rejects the key itself
+    $("driveKey").value = driveKey;
+    function showKeyMsg() {
+      var drives = (teams || []).filter(function (t) { return t.driveId; }).length;
+      if (keyProblem) setMsg("keyMsg", "bad", "Google rejected the API key: " + esc(String(keyProblem).replace(/\.\s*$/, "")) + ". Check that the Google Drive API is enabled for the key's project. Drive videos will stream for now.");
+      else if (driveKey) setMsg("keyMsg", "ok", "Drive API key set" + (drives ? ". " + drives + " team" + (drives > 1 ? "s use" : " uses") + " Google Drive." : "."));
+      else if (drives) setMsg("keyMsg", "warn", drives + " team" + (drives > 1 ? "s submitted" : " submitted") + " a Google Drive link. Add an API key to pre-download " + (drives > 1 ? "them" : "it") + "; otherwise " + (drives > 1 ? "they stream" : "it streams") + " live.");
+      else setMsg("keyMsg", "", "");
+    }
+    $("driveKeySave").addEventListener("click", function () {
+      driveKey = $("driveKey").value.trim(); keyProblem = null;
+      lsSet("prepDriveKey", driveKey); showKeyMsg();
+      if (teams.length) startChecks();
+    });
+    showKeyMsg();
     $("sheetUrl").value = lsGet("prepSheetUrl", CFG.sheetUrl);
 
     var teams = [];          // { order, team, task, url, src, youtube, check, problem, duration }
@@ -363,10 +416,12 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
       teams = Object.keys(byTeam).map(function (k) { return byTeam[k]; }).sort(function (a, b) { return a.order - b.order; });
       teams.forEach(function (t) {
         var res = resolveUrl(t.url);
-        t.src = res.src; t.youtube = res.youtube; t.check = "pending"; t.problem = null; t.duration = null;
+        t.src = res.src; t.youtube = res.youtube; t.folder = !!res.folder; t.driveId = res.driveId || null; t.driveRk = res.driveRk || null;
+        t.check = "pending"; t.problem = null; t.duration = null; t.dl = null;
       });
       setMsg("loadMsg", "ok", "Loaded " + teams.length + " team submission" + (teams.length === 1 ? "" : "s") + " from " + esc(source) +
         " at " + new Date().toLocaleTimeString() + "." + (notes.length ? '<br><span class="muted">' + notes.join("; ") + "</span>" : ""));
+      showKeyMsg();
       buildGroups();
       $("splitCard").classList.remove("hidden");
       $("checkCard").classList.remove("hidden");
@@ -381,9 +436,12 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
       if (!u) return { src: null, youtube: null };
       if ((m = u.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([A-Za-z0-9_-]{6,})/))) return { src: null, youtube: m[1] };
       if ((m = u.match(/^https?:\/\/(?:www\.)?github\.com\/([^\/]+)\/([^\/]+)\/(?:blob|raw)\/([^?#]+)/))) return { src: "https://raw.githubusercontent.com/" + m[1] + "/" + m[2] + "/" + m[3], youtube: null };
-      if ((m = u.match(/drive\.google\.com\/file\/d\/([A-Za-z0-9_-]+)/)) || (m = u.match(/drive\.google\.com\/(?:open|uc)\?(?:.*&)?id=([A-Za-z0-9_-]+)/)) ||
-          (m = u.match(/drive\.usercontent\.google\.com\/.*[?&]id=([A-Za-z0-9_-]+)/)))
-        return { src: "https://drive.usercontent.google.com/download?id=" + m[1] + "&export=download&confirm=t", youtube: null };
+      if (/drive\.google\.com\/.*folders\//.test(u)) return { src: null, youtube: null, folder: true };
+      if ((m = u.match(/(?:drive|docs)\.google\.com\/(?:a\/[^\/]+\/)?file\/d\/([A-Za-z0-9_-]+)/)) || (m = u.match(/drive\.google\.com\/(?:open|uc)\?(?:.*&)?id=([A-Za-z0-9_-]+)/)) ||
+          (m = u.match(/drive\.usercontent\.google\.com\/.*[?&]id=([A-Za-z0-9_-]+)/))) {
+        var rk = (u.match(/[?&]resourcekey=([A-Za-z0-9_-]+)/i) || [])[1] || null;
+        return { src: "https://drive.usercontent.google.com/download?id=" + m[1] + "&export=download&confirm=t", youtube: null, driveId: m[1], driveRk: rk };
+      }
       if ((m = u.match(/^https?:\/\/(?:www\.)?dropbox\.com\/(.+)$/))) {
         var rest = m[1].replace(/([?&])dl=[01]&?/, "$1").replace(/[?&]$/, "");
         return { src: "https://dl.dropboxusercontent.com/" + rest, youtube: null };
@@ -486,10 +544,79 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
         v.src = src;
       });
     }
+    function finishWithDuration(t) {
+      if (t.duration && t.duration > CFG.longVideoSec) {
+        t.problem = (t.problem ? t.problem + "; " : "") + "video is " + fmtDur(t.duration) + " long - wrong video submitted?";
+        if (t.check === "ready") t.check = "readyWarn";
+      }
+    }
+
+    // Google Drive via the Drive API: tells us if the file is shared, what it is
+    // and how long it is, and gives a download link the playlist page can use.
+    var DRIVE_API = "https://www.googleapis.com/drive/v3/files/";
+    function driveHeaders(t) { return t.driveRk ? { "X-Goog-Drive-Resource-Keys": t.driveId + "/" + t.driveRk } : {}; }
+    function checkDrive(t) {
+      var key = encodeURIComponent(driveKey);
+      var metaUrl = DRIVE_API + t.driveId + "?fields=name,mimeType,size,videoMediaMetadata&supportsAllDrives=true&key=" + key;
+      return fetch(metaUrl, { headers: driveHeaders(t), credentials: "omit", cache: "no-store" }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (j) { return { r: r, j: j }; });
+      }).then(function (x) {
+        if (!x.r.ok) {
+          var err = (x.j && x.j.error) || {}, reason = ((err.errors || [])[0] || {}).reason || err.status || "";
+          if (x.r.status === 404) {
+            t.check = "bad"; t.problem = "Google Drive file isn't shared publicly. Ask the team to set sharing to “Anyone with the link”."; return null;
+          }
+          if (x.r.status === 400 || /keyInvalid|accessNotConfigured|SERVICE_DISABLED|API_KEY|PERMISSION_DENIED/i.test(reason + " " + (err.message || ""))) {
+            keyProblem = err.message || ("HTTP " + x.r.status); showKeyMsg(); return "fallback";
+          }
+          t.check = "bad"; t.problem = "Google Drive: " + (err.message || "HTTP " + x.r.status); return null;
+        }
+        var meta = x.j;
+        if (meta.mimeType === "application/vnd.google-apps.folder") { t.check = "bad"; t.problem = "link is to a Drive folder, not the video file"; return null; }
+        if (!/^video\//.test(meta.mimeType || "")) { t.check = "bad"; t.problem = "Google Drive file “" + meta.name + "” is not a video (" + meta.mimeType + ")"; return null; }
+        var vm = meta.videoMediaMetadata || {};
+        if (vm.durationMillis) t.duration = Number(vm.durationMillis) / 1000;
+        t.dl = DRIVE_API + t.driveId + "?alt=media&supportsAllDrives=true&key=" + key;
+        if (t.driveRk) { t.check = "ready"; finishWithDuration(t); return null; }   // can't test-play with the extra header; Drive says it's a video
+        return probeVideo(t.dl).then(function (v) {
+          if (!v.ok) { t.check = "bad"; t.problem = v.timeout ? "timed out loading the video from Google Drive" : "Google Drive video won't play in the browser (format/codec not supported - ask for an H.264 mp4)"; t.dl = null; return null; }
+          if (isFinite(v.duration)) t.duration = v.duration;
+          if (v.w === 0) t.problem = "audio only - no picture";
+          t.check = "ready"; finishWithDuration(t); return null;
+        });
+      }).catch(function () { return "fallback"; });
+    }
+
+    // YouTube can't be inspected from a page, but its thumbnail tells us whether the video exists:
+    // real videos have a 320px-wide thumbnail, missing ones a 120px placeholder (or an error).
+    function checkYouTube(t) {
+      t.check = "checking";
+      return new Promise(function (resolve) {
+        var img = new Image(), done = false;
+        function finish(w) {
+          if (done) return; done = true; clearTimeout(to);
+          if (w === 0 || w === 120) { t.check = "bad"; t.problem = "YouTube video not found - deleted, private or a wrong link"; }
+          else { t.check = "stream"; t.problem = "YouTube: streams from YouTube during judging (needs internet)" + (w === null ? " - couldn't check it" : ""); }
+          resolve();
+        }
+        var to = setTimeout(function () { finish(null); }, 10000);
+        img.onload = function () { finish(img.naturalWidth); };
+        img.onerror = function () { finish(0); };
+        img.src = "https://i.ytimg.com/vi/" + encodeURIComponent(t.youtube) + "/mqdefault.jpg";
+      });
+    }
+
     function checkOne(t) {
       if (!t.url) { t.check = "bad"; t.problem = "no video link submitted"; return Promise.resolve(); }
-      if (t.youtube) { t.check = "stream"; t.problem = "YouTube link: streams from YouTube (needs internet)"; return Promise.resolve(); }
-      t.check = "checking";
+      if (t.folder) { t.check = "bad"; t.problem = "link is to a Google Drive folder, not the video file"; return Promise.resolve(); }
+      if (t.youtube) return checkYouTube(t);
+      t.check = "checking"; t.dl = null;
+      if (t.driveId && driveKey && !keyProblem) {
+        return checkDrive(t).then(function (res) { if (res === "fallback") return checkGeneric(t); });
+      }
+      return checkGeneric(t);
+    }
+    function checkGeneric(t) {
       return probeFetch(t.src).then(function (f) {
         if (f.cors && f.status >= 400) {
           t.check = "bad"; t.problem = "HTTP " + f.status + (f.status === 401 || f.status === 403 ? " - not public" : f.status === 404 ? " - not found" : "");
@@ -507,11 +634,12 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
           t.duration = isFinite(v.duration) ? v.duration : null;
           if (v.w === 0) { t.problem = "audio only - no picture"; }
           if (f.cors) { t.check = "ready"; }
-          else { t.check = "stream"; t.problem = "host blocks pre-downloading - will stream live (needs internet)"; }
-          if (t.duration && t.duration > CFG.longVideoSec) {
-            t.problem = (t.problem ? t.problem + "; " : "") + "video is " + fmtDur(t.duration) + " long - wrong video submitted?";
-            if (t.check === "ready") t.check = "readyWarn";
+          else {
+            t.check = "stream";
+            t.problem = t.driveId ? "Google Drive link: streams live (add a Drive API key in step 1 to pre-download)"
+                                  : "host blocks pre-downloading - will stream live (needs internet)";
           }
+          finishWithDuration(t);
         });
       }).catch(function (e) { t.check = "bad"; t.problem = "check failed: " + (e && e.message || e); });
     }
@@ -595,7 +723,9 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
     }
     function buildPlaylist(p) {
       var items = playlistTeams(p).map(function (t) {
-        return { team: t.team, task: t.task, url: t.url, src: t.src, youtube: t.youtube,
+        // Drive files checked through the API download through it; the plain Drive link is the fallback
+        return { team: t.team, task: t.task, url: t.url, src: t.dl || t.src, alt: t.dl ? t.src : null,
+                 hdr: t.dl && t.driveRk ? driveHeaders(t) : null, youtube: t.youtube,
                  check: t.check, problem: t.problem, duration: t.duration ? Math.round(t.duration) : null };
       });
       var now = new Date();
@@ -638,7 +768,7 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
     $("menu").classList.remove("hidden");
 
     // ---------------- settings ----------------
-    var defaults = { titleSec: 5, scoreSec: 12, maxSec: 60 };
+    var defaults = { titleSec: 5, scoreSec: 12, maxSec: 60, failSec: 6 };
     var settings = Object.assign({}, defaults, lsGet("hackathonPlayerSettings", {}));
     function bindSetting(id, key) {
       var el = $(id);
@@ -653,18 +783,32 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
     bindSetting("setTitle", "titleSec");
     bindSetting("setScore", "scoreSec");
     bindSetting("setMax", "maxSec");
+    bindSetting("setFail", "failSec");
 
     // ---------------- items & download state ----------------
     // state: queued | loading | ready | stream | bad | youtube | none
     var list = PL.items.map(function (it, i) {
-      var st = it.youtube ? "youtube" : (it.src ? "queued" : "none");
-      return { i: i, team: it.team, task: it.task, url: it.url, src: it.src, youtube: it.youtube,
+      // Teams the prep check found broken are only retried if the file can be downloaded; otherwise they get the "not working" card
+      var prepBad = it.check === "bad";
+      var st = it.youtube ? (prepBad ? "bad" : "youtube") : (it.src ? "queued" : "none");
+      return { i: i, team: it.team, task: it.task, url: it.url, src: it.src, primary: it.src, alt: it.alt || null, hdr: it.hdr || null, youtube: it.youtube, prepBad: prepBad,
                check: it.check, problem: it.problem, state: st, blobUrl: null, loaded: 0, total: 0, note: "" };
     });
-    function playSrc(it) { return it.blobUrl || (it.state === "stream" || it.state === "loading" || it.state === "queued" ? it.src : null); }
+    function playSrc(it) {
+      if (it.blobUrl) return it.blobUrl;
+      if (it.prepBad) return null;   // prep found it broken and it couldn't be downloaded here either
+      if (!(it.state === "stream" || it.state === "loading" || it.state === "queued")) return null;
+      return it.hdr ? it.alt : it.src;   // a <video> can't send the extra Drive header, so stream the plain link
+    }
+    // Switch a Drive item to streaming its plain Drive link
+    function fallBack(it, why) {
+      it.src = it.alt; it.hdr = null; it.alt = null;
+      it.state = "stream"; it.note = why + " - will stream live";
+    }
 
     // ---------------- downloader ----------------
     var CONCURRENCY = 3, active = 0;
+    var autostart = /autostart/i.test(location.hash);
 
     function pump() {
       while (active < CONCURRENCY) {
@@ -678,14 +822,19 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
     function download(it) {
       active++;
       it.state = "loading"; it.loaded = 0; it.total = 0; it.note = "";
-      fetch(it.src, { mode: "cors", credentials: "omit", cache: "no-store" }).then(function (resp) {
+      // Give up on a download that receives nothing for 30 seconds
+      var ctl = new AbortController(), idle = null;
+      function poke() { clearTimeout(idle); idle = setTimeout(function () { ctl.abort(); }, 30000); }
+      poke();
+      fetch(it.src, { mode: "cors", credentials: "omit", cache: "no-store", headers: it.hdr || {}, signal: ctl.signal }).then(function (resp) {
+        if (!resp.ok && it.alt) throw { fallback: "Google Drive download refused (HTTP " + resp.status + ")" };
         if (!resp.ok) throw { fatal: true, msg: "HTTP " + resp.status + (resp.status === 401 || resp.status === 403 ? " (not public)" : resp.status === 404 ? " (not found)" : "") };
         it.total = Number(resp.headers.get("Content-Length")) || 0;
         var chunks = [], reader = resp.body.getReader(), checked = false;
         function read() {
           return reader.read().then(function (r) {
             if (r.done) return;
-            chunks.push(r.value); it.loaded += r.value.length;
+            chunks.push(r.value); it.loaded += r.value.length; poke();
             if (!checked && it.loaded >= 16) {
               checked = true;
               var first = new Uint8Array(16), off = 0;
@@ -699,6 +848,7 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
           });
         }
         return read().then(function () {
+          clearTimeout(idle);
           var blob = new Blob(chunks, { type: it.kind === "webm" ? "video/webm" : "video/mp4" });
           var url = URL.createObjectURL(blob);
           it.total = it.loaded = blob.size;
@@ -709,7 +859,10 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
           });
         });
       }).catch(function (err) {
+        clearTimeout(idle);
         if (err && err.fatal) { it.state = "bad"; it.note = err.msg; }
+        else if (it.prepBad) { it.state = "bad"; it.note = it.problem || "link not working"; }
+        else if (it.alt) fallBack(it, err && err.fallback || "Google Drive download failed");
         else { it.state = "stream"; it.note = "host blocks pre-downloading - will stream live"; }
       }).then(function () {
         active--;
@@ -734,7 +887,8 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
 
     function retry(i) {
       var it = list[i];
-      if (it.blobUrl || !it.src) return;
+      if (it.blobUrl || !it.primary) return;
+      if (it.src !== it.primary) { it.alt = it.src; it.src = it.primary; it.hdr = PL.items[i].hdr || null; }
       it.state = "queued"; pump();
     }
 
@@ -755,8 +909,8 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
         case "queued":  return '<span class="pill">waiting</span>';
         case "stream":  return '<span class="pill warn" title="' + esc(it.note) + '">streams live</span>';
         case "youtube": return '<span class="pill warn" title="Streams from YouTube, needs internet">YouTube &middot; streams</span>';
-        case "bad":     return '<span class="pill bad" title="' + esc(it.note) + '">' + esc(it.note) + '</span>';
-        default:        return '<span class="pill bad">no video link</span>';
+        case "bad":     var why = it.note || it.problem || "not working"; return '<span class="pill bad" title="' + esc(why) + '">' + esc(why) + '</span>';
+        default:        return '<span class="pill bad">' + esc(it.problem || "no video link") + '</span>';
       }
     }
 
@@ -806,6 +960,8 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
       $("dlNote").textContent = notes.join(" ");
       $("dlNote").classList.toggle("hidden", !notes.length);
       $("startBtn").innerHTML = "&#9654; Start " + esc(PL.name) + (pending ? " (" + ready + "/" + withSrc.length + " downloaded)" : "");
+      // Opened with #autostart at the end of the address: start by itself once downloads finish
+      if (autostart && !pending && phase === "idle") { autostart = false; start(0); }
 
       list.forEach(function (it, i) {
         var p = $("pill" + i); if (p) p.innerHTML = pillFor(it);
@@ -822,14 +978,13 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
     function otherVid() { return vids[1 - cur]; }
 
     function showOnly(id) {
-      ["titleScreen", "scoreScreen", "endScreen"].forEach(function (s) { $(s).classList.toggle("hidden", s !== id); });
+      ["titleScreen", "scoreScreen", "failScreen", "endScreen"].forEach(function (s) { $(s).classList.toggle("hidden", s !== id); });
     }
 
     function stopMedia() {
       vids.forEach(function (v) { v.pause(); });
-      var yt = $("yt");
-      if (yt.getAttribute("src") && yt.getAttribute("src") !== "about:blank") yt.src = "about:blank";
-      yt.classList.add("hidden");
+      if (ytPlayer && ytReady) { try { ytPlayer.stopVideo(); } catch (e) {} }
+      $("ytBox").classList.add("hidden");
     }
 
     function start(i) {
@@ -887,6 +1042,7 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
       $("titlePos").textContent = PL.name + "  ·  Team " + (idx + 1) + " of " + list.length;
       $("titleTeam").textContent = it.team;
       $("titleTask").textContent = it.task;
+      if (!playSrc(it) && !(it.youtube && it.state !== "bad")) { showFail(it, it.note || it.problem || "no video link"); return; }
       showOnly("titleScreen");
       runTimer(settings.titleSec, $("titleBar"), function () { playVideo(it); }, null);
     }
@@ -902,25 +1058,42 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
         if (curVid().dataset.src !== src) { var k = ensureLoaded(idx); if (k >= 0) cur = k; }
         var v = curVid();
         v.classList.remove("preload"); otherVid().classList.add("preload");
+        watch = { t: -1, at: performance.now() };
         var p = v.play();
         if (p && p.catch) p.catch(function (e) {
-          if (e && e.name === "NotAllowedError") { v.muted = true; v.play().catch(function () { videoFailed(it, "Video could not be played"); }); }
+          // Browser refused sound without a click (e.g. autostart): play muted rather than stop the show
+          if (e && e.name === "NotAllowedError") { v.muted = true; v.play().catch(function () { videoFailed(it, "the browser refused to play the video"); }); }
         });
         if (paused) v.pause();
-      } else if (it.youtube) {
-        var yt = $("yt");
-        yt.classList.remove("hidden");
-        yt.src = "https://www.youtube.com/embed/" + encodeURIComponent(it.youtube) + "?autoplay=1&rel=0&modestbranding=1&playsinline=1";
-        // We can't see when an embedded YouTube video ends, so give it a fixed slot.
-        runTimer(settings.maxSec > 0 ? settings.maxSec : 47, null, function () { afterVideo(it, null); }, null);
+      } else if (it.youtube && it.state !== "bad") {
+        playYouTube(it);
       } else {
-        videoFailed(it, "No playable video for this team" + (it.note || it.problem ? " (" + (it.note || it.problem) + ")" : ""));
+        showFail(it, it.note || it.problem || "no video link");
       }
     }
 
+    // The video broke while playing. If the judges saw most of it, go to scoring; otherwise move on.
     function videoFailed(it, msg) {
       if (phase !== "video") return;
-      afterVideo(it, msg);
+      var played = playSrc(it) ? curVid().currentTime : (it.youtube && ytPlayer && ytReady ? (ytPlayer.getCurrentTime() || 0) : 0);
+      if (played >= 30) afterVideo(it, "The video stopped early (" + msg + ")");
+      else showFail(it, msg);
+    }
+
+    // "Sorry, this team's video isn't working" card, then straight on to the next team (no scoring pause)
+    function showFail(it, why) {
+      stopMedia();
+      phase = "fail";
+      $("tag").classList.add("hidden"); updateHud();
+      $("failPos").textContent = PL.name + "  ·  Team " + (idx + 1) + " of " + list.length;
+      $("failTeam").textContent = it.team;
+      $("failTask").textContent = it.task;
+      $("failWhy").textContent = why ? "(" + why + ")" : "";
+      var nxt = list[idx + 1];
+      $("failNext").innerHTML = nxt ? "Up next: <b>" + esc(nxt.team) + "</b>" : "That was the last team in " + esc(PL.name);
+      showOnly("failScreen");
+      if (nxt) ensureLoaded(idx + 1);
+      runTimer(settings.failSec, $("failBar"), function () { goTo(idx + 1); }, null);
     }
 
     function afterVideo(it, note) {
@@ -958,7 +1131,7 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
         if (v === curVid() && phase === "video" && settings.maxSec > 0 && v.currentTime >= settings.maxSec) afterVideo(list[idx], null);
       });
       v.addEventListener("error", function () {
-        if (v === curVid() && phase === "video") videoFailed(list[idx], "Video could not be played");
+        if (v === curVid() && phase === "video") videoFailed(list[idx], "the link didn't return a playable video");
       });
     });
 
@@ -974,8 +1147,80 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
       if (timer.bar) timer.bar.style.width = (Math.min(1, frac) * 100) + "%";
       if (timer.countEl) timer.countEl.textContent = Math.max(0, Math.ceil(timer.remaining / 1000));
     }
+    // ---------------- YouTube (official IFrame Player API) ----------------
+    // Lets us autoplay, see when the video ends, and catch videos that can't be played.
+    var ytApi = null, ytPlayer = null, ytReady = false, ytState = { started: false, at: 0, mutedTry: false };
+    var YT_ERRORS = {
+      2: "not a valid YouTube link", 5: "YouTube player error",
+      100: "YouTube video not found, private or removed",
+      101: "the owner doesn't allow this YouTube video to be embedded", 150: "the owner doesn't allow this YouTube video to be embedded",
+      152: "YouTube refused to play it here", 153: "YouTube refused to play it from a file on this computer"
+    };
+    function loadYtApi() {
+      if (ytApi) return ytApi;
+      ytApi = new Promise(function (resolve, reject) {
+        if (window.YT && window.YT.Player) return resolve(window.YT);
+        window.onYouTubeIframeAPIReady = function () { resolve(window.YT); };
+        var sc = document.createElement("script");
+        sc.src = "https://www.youtube.com/iframe_api";
+        sc.onerror = function () { reject(new Error("couldn't reach YouTube (no internet?)")); };
+        document.head.appendChild(sc);
+        setTimeout(function () { reject(new Error("the YouTube player didn't load (no internet?)")); }, 15000);
+      });
+      ytApi.catch(function () { ytApi = null; });   // allow another try for the next YouTube team
+      return ytApi;
+    }
+    function ytCurrent() { return phase === "video" && list[idx] && list[idx].youtube && list[idx].state !== "bad" ? list[idx] : null; }
+    function playYouTube(it) {
+      $("ytBox").classList.remove("hidden");
+      ytState = { started: false, at: performance.now(), mutedTry: false };
+      loadYtApi().then(function (YT) {
+        if (ytCurrent() !== it) return;
+        if (ytPlayer && ytReady) { try { ytPlayer.unMute(); } catch (e) {} ytPlayer.loadVideoById(it.youtube); return; }
+        if (ytPlayer) return;   // still starting up: onReady loads the current team's video
+        ytPlayer = new YT.Player("yt", {
+          width: "100%", height: "100%",
+          playerVars: { autoplay: 1, rel: 0, playsinline: 1, controls: 0, modestbranding: 1, iv_load_policy: 3, fs: 0, disablekb: 1 },
+          events: {
+            onReady: function (e) { ytReady = true; var c = ytCurrent(); if (c) e.target.loadVideoById(c.youtube); },
+            onStateChange: function (e) {
+              var c = ytCurrent(); if (!c) return;
+              if (e.data === 1) ytState.started = true;           // playing
+              if (e.data === 0) afterVideo(c, null);              // ended
+            },
+            onError: function (e) { var c = ytCurrent(); if (c) videoFailed(c, YT_ERRORS[e.data] || "YouTube error " + e.data); }
+          }
+        });
+      }).catch(function (err) { if (ytCurrent() === it) showFail(it, err.message); });
+    }
+    function checkYouTube(now) {
+      if (paused) { ytState.at = now; return; }
+      if (!ytState.started) {
+        // Still not playing after a few seconds and not loading: the browser probably blocked sound, so try muted
+        if (!ytState.mutedTry && ytReady && now - ytState.at > 5000) {
+          var st = ytPlayer.getPlayerState ? ytPlayer.getPlayerState() : -1;
+          if (st === -1 || st === 5) { ytState.mutedTry = true; try { ytPlayer.mute(); ytPlayer.playVideo(); } catch (e) {} }
+        }
+        if (now - ytState.at > START_TIMEOUT) videoFailed(list[idx], "the YouTube video didn't start");
+      } else if (settings.maxSec > 0 && ytReady && ytPlayer.getCurrentTime() >= settings.maxSec) {
+        afterVideo(list[idx], null);
+      }
+    }
+
+    // Stall watchdog: a streamed video that doesn't start, or stops loading, counts as broken
+    var watch = { t: -1, at: 0 };
+    var START_TIMEOUT = 20000, STALL_TIMEOUT = 15000;
+    function checkStall(now) {
+      if (ytCurrent()) { checkYouTube(now); return; }
+      if (phase !== "video" || !playSrc(list[idx])) return;
+      var v = curVid();
+      if (paused || v.currentTime !== watch.t) { watch.t = v.currentTime; watch.at = now; return; }
+      var limit = v.currentTime > 0 ? STALL_TIMEOUT : START_TIMEOUT;
+      if (now - watch.at > limit) videoFailed(list[idx], v.currentTime > 0 ? "the video stopped loading" : "the video didn't start - link not working, or too slow");
+    }
     function tick(now) {
       var dt = now - lastTick; lastTick = now;
+      checkStall(now);
       if (timer && !paused) {
         timer.remaining -= dt;
         drawTimer();
@@ -991,6 +1236,7 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
       paused = !paused;
       $("paused").classList.toggle("hidden", !paused);
       if (phase === "video" && playSrc(list[idx])) { if (paused) curVid().pause(); else curVid().play().catch(function () {}); }
+      else if (phase === "video" && list[idx].youtube && ytPlayer && ytReady) { if (paused) ytPlayer.pauseVideo(); else ytPlayer.playVideo(); }
     }
     document.addEventListener("keydown", function (e) {
       if ($("stage").classList.contains("hidden")) return;
@@ -1000,7 +1246,7 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
         e.preventDefault();
         if (phase === "title") { timer = null; playVideo(list[idx]); }
         else if (phase === "video") afterVideo(list[idx], null);
-        else if (phase === "score") goTo(idx + 1);
+        else if (phase === "score" || phase === "fail") goTo(idx + 1);
       }
       else if (k === "ArrowLeft") {
         e.preventDefault();
@@ -1022,6 +1268,7 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
 
     renderMenu();
     pump();
+    if (list.some(function (it) { return it.youtube; })) loadYtApi();   // get the YouTube player ready early
   }
 })();
 </script>
