@@ -4,35 +4,35 @@ Plays the 45-second submission videos for judging, in two playlists:
 
 **team name** (5 s) → **video** → **"Judges, submit your scores" countdown** (12 s) → next team …
 
-There are two separate steps:
+It's all one file, `hackathon-videos.html`, with nothing to install. It works on Mac or Windows in Chrome or Edge.
 
-1. **Prepare** (once, on any Windows PC): `prepare.bat` builds two standalone pages, `playlist-1.html` and `playlist-2.html`, and checks every video link.
-2. **Play** (on the judging computer(s)): open one playlist page. It downloads **only that playlist's videos**, then plays them.
+1. **Prepare** (e.g. on your Mac): open `hackathon-videos.html`. Load the responses, check the split and the video links, then save `playlist-1_….html` and `playlist-2_….html`.
+2. **Play** (e.g. on the Windows judging computers): open a saved playlist file. It downloads **only that playlist's videos**, then plays them.
 
-Nothing needs installing: the prep step uses the PowerShell built into Windows, and the pages run in Chrome or Edge.
+## 1. Prepare
 
-## 1. Prepare the playlists
+Open **`hackathon-videos.html`** in Chrome (double-click it, or drag it onto Chrome).
 
-1. Download this folder (on GitHub: **Code → Download ZIP**) and unzip it.
-2. Double-click **`prepare.bat`**. It:
-   - downloads the latest form responses from the Google Sheet
-   - splits teams into **Playlist 1** (all Machine Learning tasks) and **Playlist 2** (everything else), grouped by task. If the sizes are uneven, it moves whole non-ML tasks across to even them out.
-   - **checks every video link.** It fetches only the first few bytes of each and reports one of:
-     - `OK`: public video that the playlist page can pre-download
-     - `WARN`: public video, but the host (e.g. Google Drive) blocks pre-downloading, or it's a YouTube link. It will stream live during judging, which needs internet and may buffer.
-     - `FAIL`: not public, a web page instead of a video, not found, or no link submitted
-   - writes `playlist-1.html`, `playlist-2.html` and `running-order.txt` into a new folder, `output\<date-time>\`. Earlier runs are kept, never overwritten.
-3. Chase the teams marked FAIL (or WARN, if you want everything pre-downloaded), then run `prepare.bat` again.
+1. **Load the form responses.** Click **Load from Google Sheet**. This only works if the sheet is shared as "anyone with the link". Otherwise, in the sheet choose **File → Download → Comma-separated values (.csv)** and drop that file onto the page.
+   - Test submissions (team names like `dummy1` or `test`) are ignored.
+   - If a team submitted more than once, its latest submission is used.
+2. **Playlists.** All Machine Learning tasks (task name contains "Machine Learning" or "ML") go in Playlist 1. Other tasks are placed to balance the two sizes. Click **move** on any task to change it. Your changes are remembered.
+3. **Video link check.** Runs automatically. Each link is tested the same way the playlist page will use it:
+   - **ready**: plays, and can be pre-downloaded
+   - **streams only**: plays, but the host (e.g. Google Drive) blocks pre-downloading, or it's a YouTube link. It needs internet during judging and may buffer.
+   - **problem**: not public, opens a web page instead of a video, not found, a format the browser can't play, or no link
+   - Videos longer than 60 s are flagged too (wrong video submitted?)
+4. **Save** Playlist 1, Playlist 2 and the running order. They go to your Downloads folder with the date and time in the name, so earlier versions are never overwritten.
 
-**If the sheet can't be downloaded automatically** (it isn't shared publicly), open the sheet, choose **File → Download → Comma-separated values (.csv)**, save the file as `responses.csv` in this folder, then run `prepare.bat` again.
+When teams fix their links, reload the responses and save again.
 
-**Most reliable host:** a file in a public GitHub repo, or Dropbox. Both allow pre-downloading. Share links from GitHub, Google Drive, Dropbox and OneDrive/SharePoint are converted to direct links automatically.
+**Most reliable host:** a file in a public GitHub repo, or Dropbox. Both can be pre-downloaded. Share links from GitHub, Google Drive, Dropbox and OneDrive/SharePoint are converted to direct links automatically.
 
-## 2. Play a playlist
+## 2. Play
 
-Copy `playlist-1.html` or `playlist-2.html` to the judging computer and open it in Chrome or Edge. Each file is self-contained.
+Copy a saved playlist file to the judging computer and open it in Chrome or Edge.
 
-- Videos start downloading straight away. The list shows each one as **waiting / % / ready / streams live / problem**, with a **retry** button for failures.
+- Videos start downloading straight away. Each one shows **waiting / % / ready / streams live / problem**, with a **retry** button for failures.
 - Click **Start** once everything shows *ready*. You can start earlier: anything not yet downloaded streams instead.
 - Keep the tab open. Videos are held by the tab, so reloading it downloads them again.
 
@@ -47,12 +47,4 @@ Copy `playlist-1.html` or `playlist-2.html` to the judging computer and open it 
 
 Each team has a **start here** button, so you can resume partway through. The menu also has settings for the team-name time, the scoring pause (default 12 s) and the cut-off for overlong videos (default 60 s; 0 = never).
 
-## Settings in `prepare.ps1`
-
-At the top of the file:
-
-- `$MlTaskPattern`: how Machine Learning tasks are recognised (default: task name contains "Machine Learning" or "ML")
-- `$PlaylistOverride`: force a task into playlist 1 or 2
-- `$IgnoreTeamPattern`: test submissions to skip (default: team names like `dummy1` or `test`)
-
-If a team submits more than once, only its latest submission is used. `player-template.html` is the template the playlist pages are built from. Keep it next to `prepare.ps1`.
+**Tip:** check on the judging computer itself before the event. A video that plays on a Mac (e.g. an iPhone HEVC `.mov`) may not play in Chrome on Windows. Each team's status in the playlist list shows this.

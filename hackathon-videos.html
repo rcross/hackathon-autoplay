@@ -1,0 +1,1029 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hackathon Videos - Prepare Playlists</title>
+<!--
+  One file, two jobs:
+   * Opened as-is it is the PREPARE tool: load the form responses, split them
+     into 2 playlists, check every video link, and save playlist-1 / playlist-2.
+   * The saved playlist files are copies of this page with one playlist built
+     in. Opened on the judging computer, they download only that playlist's
+     videos and play them: team name -> video -> scoring countdown.
+-->
+<style>
+  :root {
+    --bg: #0d0f14;
+    --panel: #171a22;
+    --line: #2a2f3c;
+    --text: #f2f4f8;
+    --muted: #9aa3b5;
+    --accent: #ffb020;
+    --good: #3ccf7a;
+    --bad: #ff5d5d;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif; }
+  body { overflow: hidden; }
+  button { font: inherit; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; }
+  .hidden { display: none !important; }
+  code { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+
+  /* ---------- shared page layout ---------- */
+  .page { height: 100%; overflow: auto; padding: 32px 16px 48px; }
+  .page .wrap { max-width: 980px; margin: 0 auto; }
+  .page h1 { margin: 0 0 4px; font-size: 30px; }
+  .page .sub { color: var(--muted); margin-bottom: 20px; font-size: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .card h2 { margin: 0 0 10px; font-size: 18px; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .card h2 .stepno { color: #000; background: var(--accent); border-radius: 999px; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; font-size: 14px; flex: none; }
+  .card h2 small { color: var(--muted); font-weight: 400; font-size: 14px; }
+  .muted { color: var(--muted); font-size: 14px; line-height: 1.6; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .btn { padding: 9px 16px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  .btn:hover:not(:disabled) { border-color: var(--muted); }
+  .btn.primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 700; }
+  .btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
+  input[type=text], input[type=number], select { padding: 7px 8px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+  input[type=text] { flex: 1; min-width: 220px; }
+  .drop { border: 2px dashed var(--line); border-radius: 10px; padding: 18px; text-align: center; color: var(--muted); margin-top: 12px; }
+  .drop.over { border-color: var(--accent); color: var(--text); }
+  .msg { margin-top: 10px; font-size: 14px; line-height: 1.5; }
+  .msg.ok { color: var(--good); } .msg.bad { color: var(--bad); } .msg.warn { color: var(--accent); }
+  .split { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+  .split .col { border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  .split .col h3 { margin: 0 0 8px; font-size: 16px; display: flex; justify-content: space-between; }
+  .split .col h3 span { color: var(--muted); font-weight: 400; }
+  .taskrow { display: flex; gap: 8px; align-items: center; padding: 5px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  .taskrow .nm { flex: 1; min-width: 0; }
+  .taskrow .ml { color: var(--accent); font-size: 11px; border: 1px solid rgba(255,176,32,.4); border-radius: 999px; padding: 0 6px; margin-left: 4px; }
+  .taskrow .ct { color: var(--muted); width: 2.5em; text-align: right; }
+  .taskrow button { font-size: 12px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--line); background: none; color: var(--muted); }
+  .taskrow button:hover { color: var(--text); border-color: var(--muted); }
+  .summary { display: flex; gap: 16px; flex-wrap: wrap; margin: 4px 0 8px; font-size: 14px; }
+  .summary b { font-size: 18px; margin-right: 4px; }
+  .downloads { display: flex; gap: 10px; flex-wrap: wrap; }
+
+  /* ---------- lists ---------- */
+  .progress { height: 10px; background: var(--bg); border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }
+  .progress div { height: 100%; width: 0; background: var(--good); transition: width .3s; }
+  ol.items { margin: 14px 0 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
+  ol.items li { display: flex; gap: 10px; align-items: center; padding: 7px 4px; border-bottom: 1px solid var(--line); font-size: 14px; }
+  ol.items li .n { color: var(--muted); width: 2.2em; text-align: right; flex: none; }
+  ol.items li .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  ol.items li .detail { color: var(--muted); font-size: 12px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  ol.items li .detail a { color: inherit; }
+  ol.items li.group { color: var(--accent); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; padding-top: 14px; }
+  .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); flex: none; white-space: nowrap; }
+  .pill.ready { color: var(--good); border-color: rgba(60,207,122,.4); }
+  .pill.warn { color: var(--accent); border-color: rgba(255,176,32,.4); }
+  .pill.bad { color: var(--bad); border-color: rgba(255,93,93,.5); }
+  ol.items button.small { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 6px; font-size: 12px; padding: 2px 8px; flex: none; }
+  ol.items button.small:hover { color: var(--text); border-color: var(--muted); }
+
+  /* ---------- player menu ---------- */
+  .dl-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  .dl-head b { font-size: 17px; }
+  .dl-head span { color: var(--muted); font-size: 14px; }
+  .dl-note { color: var(--accent); font-size: 14px; margin-top: 10px; }
+  .start { width: 100%; margin-top: 14px; padding: 14px; border: 0; border-radius: 8px; background: var(--accent); color: #000; font-weight: 700; font-size: 18px; }
+  .start:hover { filter: brightness(1.08); }
+  .settings { margin-top: 20px; display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; color: var(--muted); font-size: 14px; }
+  .settings input { width: 64px; }
+  .keys { margin-top: 14px; color: var(--muted); font-size: 13px; line-height: 1.8; }
+  kbd { background: var(--panel); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 6px; font-family: inherit; color: var(--text); }
+
+  /* ---------- stage ---------- */
+  #stage { position: fixed; inset: 0; background: #000; }
+  #stage video, #stage iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; }
+  #stage video.preload { visibility: hidden; }
+  .screen { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 5vh 6vw; background: var(--bg); }
+  .eyebrow { color: var(--muted); font-size: clamp(16px, 2.2vw, 30px); letter-spacing: .08em; text-transform: uppercase; }
+  .team { font-size: clamp(40px, 8vw, 140px); font-weight: 800; line-height: 1.05; margin: 2vh 0; overflow-wrap: anywhere; }
+  .task { color: var(--accent); font-size: clamp(18px, 2.6vw, 40px); font-weight: 600; }
+  .count { font-size: clamp(90px, 22vw, 340px); font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; color: var(--accent); }
+  .next { margin-top: 4vh; color: var(--muted); font-size: clamp(16px, 2vw, 28px); }
+  .next b { color: var(--text); }
+  .note { margin-top: 2vh; color: var(--bad); font-size: clamp(16px, 2vw, 28px); }
+  .bar { position: absolute; left: 0; bottom: 0; height: 8px; background: var(--accent); width: 0; }
+  #tag { position: absolute; left: 16px; top: 16px; background: rgba(0,0,0,.55); padding: 6px 12px; border-radius: 8px; font-size: 15px; color: #fff; pointer-events: none; }
+  #hud { position: absolute; right: 16px; top: 16px; background: rgba(0,0,0,.55); padding: 6px 12px; border-radius: 8px; font-size: 14px; color: #fff; pointer-events: none; }
+  #paused { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.5); font-size: clamp(32px, 5vw, 72px); font-weight: 800; letter-spacing: .1em; pointer-events: none; }
+  body.hide-cursor #stage { cursor: none; }
+</style>
+</head>
+<body>
+
+<!-- ======================= PREPARE TOOL ======================= -->
+<div id="prep" class="page hidden">
+  <div class="wrap">
+    <h1>Prepare hackathon playlists</h1>
+    <div class="sub">Load the form responses, check the split and the video links, then save the two playlist files for the judging computer(s).</div>
+
+    <div class="card">
+      <h2><span class="stepno">1</span> Load the form responses</h2>
+      <div class="row">
+        <input type="text" id="sheetUrl" spellcheck="false">
+        <button class="btn primary" id="fetchSheet">Load from Google Sheet</button>
+      </div>
+      <div class="drop" id="drop">Or drop the responses <b>.csv</b> here &nbsp;·&nbsp; <label style="text-decoration:underline;cursor:pointer">choose file<input type="file" id="csvFile" accept=".csv,text/csv" class="hidden"></label>
+        <div class="muted" style="margin-top:6px">In the sheet: File → Download → Comma-separated values (.csv)</div>
+      </div>
+      <div class="msg" id="loadMsg"></div>
+    </div>
+
+    <div class="card hidden" id="splitCard">
+      <h2><span class="stepno">2</span> Playlists <small>All Machine Learning tasks stay in Playlist 1. Other tasks are placed to balance the sizes. Use “move” to change it.</small></h2>
+      <div class="split" id="split"></div>
+      <div class="msg" id="splitMsg"></div>
+    </div>
+
+    <div class="card hidden" id="checkCard">
+      <h2><span class="stepno">3</span> Video link check <small id="checkSub"></small></h2>
+      <div class="progress"><div id="checkBar"></div></div>
+      <div class="summary" id="checkSummary"></div>
+      <div class="muted">
+        <span class="pill ready">ready</span> plays, and the playlist page can pre-download it &nbsp;
+        <span class="pill warn">streams only</span> plays, but the host blocks pre-downloading, so it needs internet during judging &nbsp;
+        <span class="pill bad">problem</span> won't play: not public, not a video, or missing
+      </div>
+      <ol class="items" id="checkList"></ol>
+      <div class="row" style="margin-top:12px"><button class="btn" id="recheck">Re-check all links</button></div>
+    </div>
+
+    <div class="card hidden" id="saveCard">
+      <h2><span class="stepno">4</span> Save the playlist files</h2>
+      <div class="muted" style="margin-bottom:12px">Copy these files to the judging computer(s) and open them in Chrome or Edge. Each file contains only its own playlist and downloads only those videos.</div>
+      <div class="downloads">
+        <button class="btn primary" id="save1">Save Playlist 1</button>
+        <button class="btn primary" id="save2">Save Playlist 2</button>
+        <button class="btn" id="saveOrder">Save running order (.txt)</button>
+      </div>
+      <div class="msg" id="saveMsg"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ======================= PLAYER MENU ======================= -->
+<div id="menu" class="page hidden">
+  <div class="wrap">
+    <h1 id="plName"></h1>
+    <div class="sub" id="plSub"></div>
+
+    <div class="card">
+      <div class="dl-head"><b id="dlTitle">Downloading videos…</b><span id="dlBytes"></span></div>
+      <div class="progress"><div id="dlBar"></div></div>
+      <div class="dl-note hidden" id="dlNote"></div>
+      <button class="start" id="startBtn">&#9654; Start playlist</button>
+      <ol class="items" id="items"></ol>
+    </div>
+
+    <div class="settings">
+      <label>Team name shown for <input type="number" id="setTitle" min="1" max="60"> s</label>
+      <label>Scoring pause <input type="number" id="setScore" min="1" max="120"> s</label>
+      <label>Cut off videos after <input type="number" id="setMax" min="0" max="600"> s <span>(0 = never)</span></label>
+    </div>
+    <div class="keys">
+      <kbd>Space</kbd> pause / resume &nbsp; <kbd>&rarr;</kbd> skip ahead &nbsp; <kbd>&larr;</kbd> back &nbsp;
+      <kbd>R</kbd> replay this team's video &nbsp; <kbd>F</kbd> fullscreen &nbsp; <kbd>Esc</kbd> stop and return here<br>
+      Keep this tab open: closing or reloading it means downloading the videos again.
+    </div>
+  </div>
+</div>
+
+<!-- ======================= PLAYER STAGE ======================= -->
+<div id="stage" class="hidden">
+  <video id="vA" playsinline preload="auto"></video>
+  <video id="vB" playsinline preload="auto" class="preload"></video>
+  <iframe id="yt" class="hidden" allow="autoplay; encrypted-media; fullscreen"></iframe>
+
+  <div id="titleScreen" class="screen hidden">
+    <div class="eyebrow" id="titlePos"></div>
+    <div class="team" id="titleTeam"></div>
+    <div class="task" id="titleTask"></div>
+    <div class="bar" id="titleBar"></div>
+  </div>
+
+  <div id="scoreScreen" class="screen hidden">
+    <div class="eyebrow">Judges &mdash; submit your scores for</div>
+    <div class="team" id="scoreTeam" style="font-size:clamp(32px,5vw,90px)"></div>
+    <div class="count" id="scoreCount"></div>
+    <div class="note hidden" id="scoreNote"></div>
+    <div class="next" id="scoreNext"></div>
+    <div class="bar" id="scoreBar"></div>
+  </div>
+
+  <div id="endScreen" class="screen hidden">
+    <div class="eyebrow">That's all the videos in</div>
+    <div class="team" id="endName"></div>
+    <div class="next">Press <kbd>Esc</kbd> to return to the menu</div>
+  </div>
+
+  <div id="tag" class="hidden"></div>
+  <div id="hud" class="hidden"></div>
+  <div id="paused" class="hidden">PAUSED</div>
+</div>
+
+<script>
+window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
+</script>
+<script>
+(function () {
+  "use strict";
+
+  // Snapshot of this page's own source, taken before anything changes the DOM.
+  // The prepare tool saves copies of it with a playlist built in.
+  var SOURCE = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
+
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) { var d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; }
+  function lsGet(k, def) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : def; } catch (e) { return def; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+
+  // Looks at the first bytes of a file: "mp4", "webm", "html" or null
+  function kindOf(bytes) {
+    if (bytes.length >= 4 && bytes[0] === 0x1A && bytes[1] === 0x45 && bytes[2] === 0xDF && bytes[3] === 0xA3) return "webm";
+    if (bytes.length >= 8) {
+      var box = String.fromCharCode(bytes[4], bytes[5], bytes[6], bytes[7]);
+      if (["ftyp", "moov", "mdat", "free", "wide", "skip"].indexOf(box) >= 0) return "mp4";
+    }
+    var head = "";
+    for (var k = 0; k < Math.min(bytes.length, 40); k++) head += String.fromCharCode(bytes[k]);
+    if (/^\s*[<{]/.test(head) || head.indexOf("version https://git-lfs") === 0) return "html";
+    return null;
+  }
+  function fmtDur(s) { s = Math.round(s); return Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2); }
+
+  if (window.PLAYLIST && window.PLAYLIST.items) runPlayer(window.PLAYLIST);
+  else runPrepare();
+
+  // =====================================================================
+  //  PREPARE TOOL
+  // =====================================================================
+  function runPrepare() {
+    var CFG = {
+      sheetUrl: "https://docs.google.com/spreadsheets/d/1TuKzcx9GDQsScX8izS0m_QAssY0nIFnrsKUOXsBLABI/edit?gid=1733447410#gid=1733447410",
+      mlPattern: /machine\s*learning|\bML\b/i,
+      ignoreTeam: /^\s*(dummy|test)\d*\s*$/i,
+      longVideoSec: 60      // warn about videos longer than this (wrong video submitted?)
+    };
+    $("prep").classList.remove("hidden");
+    document.title = "Hackathon Videos - Prepare Playlists";
+    $("sheetUrl").value = lsGet("prepSheetUrl", CFG.sheetUrl);
+
+    var teams = [];          // { order, team, task, url, src, youtube, check, problem, duration }
+    var groups = [];         // { task, count, ml }
+    var assign = {};         // task -> 1 | 2
+    var overrides = lsGet("prepOverrides", {});   // task -> 1 | 2 (set by "move")
+    var checkRun = 0;
+
+    // ---------- step 1: load ----------
+    function setMsg(id, cls, html) { var m = $(id); m.className = "msg " + (cls || ""); m.innerHTML = html; }
+
+    $("fetchSheet").addEventListener("click", function () {
+      var u = $("sheetUrl").value.trim();
+      lsSet("prepSheetUrl", u);
+      var id = (u.match(/\/spreadsheets\/d\/([A-Za-z0-9_-]+)/) || [])[1];
+      var gid = (u.match(/[#&?]gid=(\d+)/) || [])[1] || "0";
+      if (!id) { setMsg("loadMsg", "bad", "That doesn't look like a Google Sheets link."); return; }
+      setMsg("loadMsg", "", "Loading…");
+      var urls = [
+        "https://docs.google.com/spreadsheets/d/" + id + "/gviz/tq?tqx=out:csv&gid=" + gid,
+        "https://docs.google.com/spreadsheets/d/" + id + "/export?format=csv&gid=" + gid
+      ];
+      (function attempt(n) {
+        fetch(urls[n], { credentials: "omit", cache: "no-store" }).then(function (r) {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.text();
+        }).then(function (text) {
+          if (/^\s*</.test(text)) throw new Error("got a sign-in page");
+          loadCsv(text, "Google Sheet");
+        }).catch(function () {
+          if (n + 1 < urls.length) return attempt(n + 1);
+          setMsg("loadMsg", "warn", "Couldn't read the sheet directly. It's probably not shared publicly, which is fine. " +
+            "In the sheet choose <b>File → Download → Comma-separated values (.csv)</b>, then drop that file in the box above.");
+        });
+      })(0);
+    });
+
+    function readFile(file) {
+      var r = new FileReader();
+      r.onload = function () { loadCsv(String(r.result), file.name); };
+      r.readAsText(file);
+    }
+    $("csvFile").addEventListener("change", function (e) { if (e.target.files[0]) readFile(e.target.files[0]); });
+    var drop = $("drop");
+    ["dragenter", "dragover"].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add("over"); }); });
+    ["dragleave", "drop"].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove("over"); }); });
+    drop.addEventListener("drop", function (e) { var f = e.dataTransfer.files[0]; if (f) readFile(f); });
+    document.addEventListener("dragover", function (e) { e.preventDefault(); });
+    document.addEventListener("drop", function (e) { e.preventDefault(); });
+
+    function parseCsv(text) {
+      var rows = [], row = [], field = "", q = false;
+      text = text.replace(/^﻿/, "");
+      for (var i = 0; i < text.length; i++) {
+        var c = text[i];
+        if (q) {
+          if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; }
+          else field += c;
+        } else if (c === '"') q = true;
+        else if (c === ",") { row.push(field); field = ""; }
+        else if (c === "\n" || c === "\r") {
+          if (c === "\r" && text[i + 1] === "\n") i++;
+          row.push(field); rows.push(row); row = []; field = "";
+        } else field += c;
+      }
+      if (field !== "" || row.length) { row.push(field); rows.push(row); }
+      return rows.filter(function (r) { return r.some(function (v) { return v.trim() !== ""; }); });
+    }
+
+    function loadCsv(text, source) {
+      var rows = parseCsv(text);
+      if (rows.length < 2) { setMsg("loadMsg", "bad", "No submissions found in " + esc(source) + "."); return; }
+      var head = rows[0].map(function (h) { return h.trim(); });
+      function col(re) { for (var i = 0; i < head.length; i++) if (re.test(head[i])) return i; return -1; }
+      var cTeam = col(/^team name/i), cTask = col(/task/i), cVid = col(/45 second/i);
+      if (cTeam < 0 || cTask < 0 || cVid < 0) {
+        setMsg("loadMsg", "bad", "Couldn't find the Team name / task / 45 second video columns in " + esc(source) + ".");
+        return;
+      }
+      var byTeam = {}, notes = [];
+      rows.slice(1).forEach(function (r, i) {
+        var team = (r[cTeam] || "").trim();
+        if (!team) return;
+        if (CFG.ignoreTeam.test(team)) { notes.push("ignored test submission “" + esc(team) + "”"); return; }
+        var key = team.toLowerCase();
+        if (byTeam[key]) notes.push("“" + esc(team) + "” submitted more than once, so the latest is used");
+        byTeam[key] = { order: i, team: team, task: (r[cTask] || "").trim() || "(no task)", url: (r[cVid] || "").trim() };
+      });
+      teams = Object.keys(byTeam).map(function (k) { return byTeam[k]; }).sort(function (a, b) { return a.order - b.order; });
+      teams.forEach(function (t) {
+        var res = resolveUrl(t.url);
+        t.src = res.src; t.youtube = res.youtube; t.check = "pending"; t.problem = null; t.duration = null;
+      });
+      setMsg("loadMsg", "ok", "Loaded " + teams.length + " team submission" + (teams.length === 1 ? "" : "s") + " from " + esc(source) +
+        " at " + new Date().toLocaleTimeString() + "." + (notes.length ? '<br><span class="muted">' + notes.join("; ") + "</span>" : ""));
+      buildGroups();
+      $("splitCard").classList.remove("hidden");
+      $("checkCard").classList.remove("hidden");
+      $("saveCard").classList.remove("hidden");
+      renderSplit();
+      startChecks();
+    }
+
+    // Convert share links to direct links where we know how
+    function resolveUrl(u) {
+      var m;
+      if (!u) return { src: null, youtube: null };
+      if ((m = u.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([A-Za-z0-9_-]{6,})/))) return { src: null, youtube: m[1] };
+      if ((m = u.match(/^https?:\/\/(?:www\.)?github\.com\/([^\/]+)\/([^\/]+)\/(?:blob|raw)\/([^?#]+)/))) return { src: "https://raw.githubusercontent.com/" + m[1] + "/" + m[2] + "/" + m[3], youtube: null };
+      if ((m = u.match(/drive\.google\.com\/file\/d\/([A-Za-z0-9_-]+)/)) || (m = u.match(/drive\.google\.com\/(?:open|uc)\?(?:.*&)?id=([A-Za-z0-9_-]+)/)) ||
+          (m = u.match(/drive\.usercontent\.google\.com\/.*[?&]id=([A-Za-z0-9_-]+)/)))
+        return { src: "https://drive.usercontent.google.com/download?id=" + m[1] + "&export=download&confirm=t", youtube: null };
+      if ((m = u.match(/^https?:\/\/(?:www\.)?dropbox\.com\/(.+)$/))) {
+        var rest = m[1].replace(/([?&])dl=[01]&?/, "$1").replace(/[?&]$/, "");
+        return { src: "https://dl.dropboxusercontent.com/" + rest, youtube: null };
+      }
+      if (/sharepoint\.com|1drv\.ms|onedrive\.live\.com/.test(u) && !/[?&]download=1/.test(u)) return { src: u + (u.indexOf("?") >= 0 ? "&" : "?") + "download=1", youtube: null };
+      return { src: u, youtube: null };
+    }
+
+    // ---------- step 2: split ----------
+    function buildGroups() {
+      var map = {};
+      teams.forEach(function (t) { (map[t.task] = map[t.task] || { task: t.task, count: 0, ml: CFG.mlPattern.test(t.task) }).count++; });
+      groups = Object.keys(map).sort(function (a, b) { return a.localeCompare(b); }).map(function (k) { return map[k]; });
+      autoAssign();
+    }
+    function count(p) { return groups.reduce(function (s, g) { return s + (assign[g.task] === p ? g.count : 0); }, 0); }
+    function autoAssign() {
+      assign = {};
+      groups.forEach(function (g) { assign[g.task] = overrides[g.task] || (g.ml ? 1 : 2); });
+      // Move whole non-ML task groups while it makes the playlists closer in size
+      for (;;) {
+        var c1 = count(1), c2 = count(2), diff = Math.abs(c1 - c2), from = c1 > c2 ? 1 : 2, best = null, bestDiff = diff;
+        groups.forEach(function (g) {
+          if (assign[g.task] !== from || g.ml || overrides[g.task]) return;
+          var nd = Math.abs(diff - 2 * g.count);
+          if (nd < bestDiff) { best = g; bestDiff = nd; }
+        });
+        if (!best) break;
+        assign[best.task] = 3 - from;
+      }
+    }
+    function renderSplit() {
+      var html = "";
+      [1, 2].forEach(function (p) {
+        html += '<div class="col"><h3>Playlist ' + p + '<span>' + count(p) + ' videos</span></h3>';
+        groups.filter(function (g) { return assign[g.task] === p; }).forEach(function (g) {
+          html += '<div class="taskrow"><span class="nm">' + esc(g.task) + (g.ml ? '<span class="ml">ML</span>' : "") + '</span>' +
+            '<span class="ct">' + g.count + '</span><button data-task="' + esc(g.task) + '">move to ' + (3 - p) + '</button></div>';
+        });
+        html += "</div>";
+      });
+      $("split").innerHTML = html;
+      Array.prototype.forEach.call($("split").querySelectorAll("button"), function (b) {
+        b.addEventListener("click", function () {
+          var t = b.dataset.task;
+          overrides[t] = 3 - assign[t]; lsSet("prepOverrides", overrides);
+          autoAssign(); renderSplit(); renderChecks();
+        });
+      });
+      var hasOverride = groups.some(function (g) { return overrides[g.task]; });
+      var noMl = !groups.some(function (g) { return g.ml; });
+      setMsg("splitMsg", noMl ? "warn" : "", (noMl ? "No task name contains “Machine Learning” or “ML”, so check the split. " : "") +
+        (hasOverride ? 'Some tasks were moved by hand. <a href="#" id="resetSplit" style="color:inherit">Reset to automatic</a>' : ""));
+      if ($("resetSplit")) $("resetSplit").addEventListener("click", function (e) {
+        e.preventDefault(); overrides = {}; lsSet("prepOverrides", overrides); autoAssign(); renderSplit(); renderChecks();
+      });
+    }
+    function playlistTeams(p) {
+      var out = [];
+      groups.forEach(function (g) {
+        if (assign[g.task] !== p) return;
+        teams.forEach(function (t) { if (t.task === g.task) out.push(t); });
+      });
+      return out;
+    }
+
+    // ---------- step 3: link check ----------
+    // Two tests per video, both done exactly as the playlist page will do them:
+    //  a) download the first bytes with fetch(): can the page pre-download it?
+    //     (also catches sign-in pages and HTTP errors)
+    //  b) load it into a <video> element: does it actually play, and how long is it?
+    function probeFetch(src) {
+      var ctl = new AbortController();
+      var to = setTimeout(function () { ctl.abort(); }, 20000);
+      // A plain GET exactly like the player's (no extra headers, so no CORS preflight); we stop reading after 64 bytes.
+      return fetch(src, { mode: "cors", credentials: "omit", cache: "no-store", signal: ctl.signal })
+        .then(function (r) {
+          if (!r.ok) return { cors: true, status: r.status };
+          var reader = r.body.getReader(), got = new Uint8Array(0);
+          function more() {
+            return reader.read().then(function (x) {
+              if (!x.done) { var n = new Uint8Array(got.length + x.value.length); n.set(got); n.set(x.value, got.length); got = n; }
+              if (x.done || got.length >= 64) { reader.cancel().catch(function () {}); return { cors: true, status: r.status, kind: kindOf(got) }; }
+              return more();
+            });
+          }
+          return more();
+        })
+        .catch(function () { return { cors: false }; })
+        .then(function (res) { clearTimeout(to); return res; });
+    }
+    function probeVideo(src) {
+      return new Promise(function (resolve) {
+        var v = document.createElement("video"), done = false;
+        v.preload = "metadata"; v.muted = true;
+        function finish(res) { if (done) return; done = true; clearTimeout(to); v.removeAttribute("src"); v.load(); resolve(res); }
+        var to = setTimeout(function () { finish({ ok: false, timeout: true }); }, 25000);
+        v.addEventListener("loadedmetadata", function () { finish({ ok: true, duration: v.duration, w: v.videoWidth }); });
+        v.addEventListener("error", function () { finish({ ok: false }); });
+        v.src = src;
+      });
+    }
+    function checkOne(t) {
+      if (!t.url) { t.check = "bad"; t.problem = "no video link submitted"; return Promise.resolve(); }
+      if (t.youtube) { t.check = "stream"; t.problem = "YouTube link: streams from YouTube (needs internet)"; return Promise.resolve(); }
+      t.check = "checking";
+      return probeFetch(t.src).then(function (f) {
+        if (f.cors && f.status >= 400) {
+          t.check = "bad"; t.problem = "HTTP " + f.status + (f.status === 401 || f.status === 403 ? " - not public" : f.status === 404 ? " - not found" : "");
+          return;
+        }
+        if (f.cors && f.kind === "html") { t.check = "bad"; t.problem = "link opens a web page / sign-in page, not a video file (not public, or not a direct link)"; return; }
+        return probeVideo(t.src).then(function (v) {
+          if (!v.ok) {
+            t.check = "bad";
+            t.problem = v.timeout ? "timed out loading the video" :
+              f.cors ? "file downloads but won't play in the browser (format/codec not supported - ask for an H.264 mp4)" :
+              "won't play: not public, not a direct video link, or not a video";
+            return;
+          }
+          t.duration = isFinite(v.duration) ? v.duration : null;
+          if (v.w === 0) { t.problem = "audio only - no picture"; }
+          if (f.cors) { t.check = "ready"; }
+          else { t.check = "stream"; t.problem = "host blocks pre-downloading - will stream live (needs internet)"; }
+          if (t.duration && t.duration > CFG.longVideoSec) {
+            t.problem = (t.problem ? t.problem + "; " : "") + "video is " + fmtDur(t.duration) + " long - wrong video submitted?";
+            if (t.check === "ready") t.check = "readyWarn";
+          }
+        });
+      }).catch(function (e) { t.check = "bad"; t.problem = "check failed: " + (e && e.message || e); });
+    }
+    function startChecks() {
+      var run = ++checkRun, queue = teams.slice(), active = 0;
+      teams.forEach(function (t) { t.check = "pending"; t.problem = null; t.duration = null; });
+      renderChecks();
+      function next() {
+        if (run !== checkRun) return;
+        while (active < 4 && queue.length) {
+          var t = queue.shift(); active++;
+          checkOne(t).then(function () { active--; if (run === checkRun) { scheduleChecks(); next(); } });
+        }
+        if (!active && !queue.length) renderChecks();
+      }
+      next();
+    }
+    $("recheck").addEventListener("click", startChecks);
+
+    var checkPending = false;
+    function scheduleChecks() { if (checkPending) return; checkPending = true; setTimeout(function () { checkPending = false; renderChecks(); }, 200); }
+
+    function pillFor(t) {
+      var d = t.duration ? " · " + fmtDur(t.duration) : "";
+      switch (t.check) {
+        case "pending":   return '<span class="pill">waiting</span>';
+        case "checking":  return '<span class="pill">checking…</span>';
+        case "ready":     return '<span class="pill ready">ready' + d + '</span>';
+        case "readyWarn": return '<span class="pill warn">ready' + d + '</span>';
+        case "stream":    return '<span class="pill warn">streams only' + d + '</span>';
+        default:          return '<span class="pill bad">problem</span>';
+      }
+    }
+    function renderChecks() {
+      var c = { ready: 0, stream: 0, bad: 0, done: 0, long: 0 };
+      teams.forEach(function (t) {
+        if (t.check === "ready" || t.check === "readyWarn") c.ready++;
+        else if (t.check === "stream") c.stream++;
+        else if (t.check === "bad") c.bad++;
+        if (t.check !== "pending" && t.check !== "checking") c.done++;
+        if (t.duration && t.duration > CFG.longVideoSec) c.long++;
+      });
+      $("checkBar").style.width = (teams.length ? 100 * c.done / teams.length : 0) + "%";
+      $("checkSub").textContent = c.done < teams.length ? "checking " + c.done + " of " + teams.length + "…" : "finished " + new Date().toLocaleTimeString();
+      $("checkSummary").innerHTML =
+        '<span style="color:var(--good)"><b>' + c.ready + '</b>ready</span>' +
+        '<span style="color:var(--accent)"><b>' + c.stream + '</b>streams only</span>' +
+        '<span style="color:var(--bad)"><b>' + c.bad + '</b>problem' + (c.bad === 1 ? "" : "s") + '</span>' +
+        (c.long ? '<span style="color:var(--accent)"><b>' + c.long + '</b>over ' + CFG.longVideoSec + ' s</span>' : "");
+      var html = "";
+      [1, 2].forEach(function (p) {
+        var last = null;
+        html += '<li class="group">Playlist ' + p + '</li>';
+        playlistTeams(p).forEach(function (t, i) {
+          if (t.task !== last) { html += '<li class="group" style="color:var(--muted);padding-top:8px">' + esc(t.task) + '</li>'; last = t.task; }
+          html += '<li><span class="n">' + (i + 1) + '.</span><span class="t" title="' + esc(t.team) + '">' + esc(t.team) + '</span>' +
+            (t.problem ? '<span class="detail" title="' + esc(t.problem + (t.url ? "\n" + t.url : "")) + '">' + esc(t.problem) + '</span>' : "") +
+            (t.url ? '<span class="detail"><a href="' + esc(t.url) + '" target="_blank" rel="noopener">link</a></span>' : "") +
+            pillFor(t) + '</li>';
+        });
+      });
+      $("checkList").innerHTML = html;
+      var checking = c.done < teams.length;
+      setMsg("saveMsg", checking ? "warn" : (c.bad ? "warn" : "ok"),
+        checking ? "Link check still running. You can save now, but it's better to wait until it finishes." :
+        c.bad ? c.bad + " team" + (c.bad > 1 ? "s have" : " has") + " a problem link. Their name and scoring pause will still show. Once a team fixes its link, reload the responses and save again." :
+        "All links checked.");
+    }
+
+    // ---------- step 4: save ----------
+    function stamp() {
+      var d = new Date(), z = function (n) { return ("0" + n).slice(-2); };
+      return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()) + "_" + z(d.getHours()) + z(d.getMinutes());
+    }
+    function saveFile(name, text, type) {
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([text], { type: type }));
+      a.download = name;
+      document.body.appendChild(a); a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    }
+    function buildPlaylist(p) {
+      var items = playlistTeams(p).map(function (t) {
+        return { team: t.team, task: t.task, url: t.url, src: t.src, youtube: t.youtube,
+                 check: t.check, problem: t.problem, duration: t.duration ? Math.round(t.duration) : null };
+      });
+      var now = new Date();
+      var data = { name: "Playlist " + p, generated: now.toLocaleDateString() + " " + now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                   tasks: groups.filter(function (g) { return assign[g.task] === p; }).map(function (g) { return g.task; }), items: items };
+      var json = JSON.stringify(data).replace(/</g, "\\u003c");  // so a team name can't end the script tag early
+      var marker = "/*__PLAYLIST_" + "DATA__*/null";
+      var html = SOURCE.replace(marker, function () { return json; })
+                       .replace(/<title>[^<]*<\/title>/, function () { return "<title>Playlist " + p + " - Hackathon Videos</title>"; });
+      return html;
+    }
+    [1, 2].forEach(function (p) {
+      $("save" + p).addEventListener("click", function () {
+        var name = "playlist-" + p + "_" + stamp() + ".html";
+        saveFile(name, buildPlaylist(p), "text/html");
+        setMsg("saveMsg", "ok", "Saved <b>" + esc(name) + "</b> (" + count(p) + " videos) to your Downloads folder.");
+      });
+    });
+    $("saveOrder").addEventListener("click", function () {
+      var lines = ["Running order, generated " + new Date().toLocaleString(), ""];
+      [1, 2].forEach(function (p) {
+        var list = playlistTeams(p), last = null;
+        lines.push("PLAYLIST " + p + "  (" + list.length + " videos)", new Array(61).join("-"));
+        list.forEach(function (t, i) {
+          if (t.task !== last) { lines.push("", "  " + t.task); last = t.task; }
+          lines.push("  " + ("  " + (i + 1)).slice(-3) + ". " + t.team + (t.check === "bad" ? "   <-- PROBLEM: " + t.problem : t.problem ? "   (note: " + t.problem + ")" : ""));
+        });
+        lines.push("", "");
+      });
+      var name = "running-order_" + stamp() + ".txt";
+      saveFile(name, lines.join("\r\n"), "text/plain");
+      setMsg("saveMsg", "ok", "Saved <b>" + esc(name) + "</b>.");
+    });
+  }
+
+  // =====================================================================
+  //  PLAYER (a saved playlist file)
+  // =====================================================================
+  function runPlayer(PL) {
+    $("menu").classList.remove("hidden");
+
+    // ---------------- settings ----------------
+    var defaults = { titleSec: 5, scoreSec: 12, maxSec: 60 };
+    var settings = Object.assign({}, defaults, lsGet("hackathonPlayerSettings", {}));
+    function bindSetting(id, key) {
+      var el = $(id);
+      el.value = settings[key];
+      el.addEventListener("change", function () {
+        var v = Number(el.value);
+        if (!isFinite(v) || v < Number(el.min)) v = defaults[key];
+        settings[key] = v; el.value = v;
+        lsSet("hackathonPlayerSettings", settings);
+      });
+    }
+    bindSetting("setTitle", "titleSec");
+    bindSetting("setScore", "scoreSec");
+    bindSetting("setMax", "maxSec");
+
+    // ---------------- items & download state ----------------
+    // state: queued | loading | ready | stream | bad | youtube | none
+    var list = PL.items.map(function (it, i) {
+      var st = it.youtube ? "youtube" : (it.src ? "queued" : "none");
+      return { i: i, team: it.team, task: it.task, url: it.url, src: it.src, youtube: it.youtube,
+               check: it.check, problem: it.problem, state: st, blobUrl: null, loaded: 0, total: 0, note: "" };
+    });
+    function playSrc(it) { return it.blobUrl || (it.state === "stream" || it.state === "loading" || it.state === "queued" ? it.src : null); }
+
+    // ---------------- downloader ----------------
+    var CONCURRENCY = 3, active = 0;
+
+    function pump() {
+      while (active < CONCURRENCY) {
+        var next = list.find(function (it) { return it.state === "queued"; });
+        if (!next) break;
+        download(next);
+      }
+      renderDownloads();
+    }
+
+    function download(it) {
+      active++;
+      it.state = "loading"; it.loaded = 0; it.total = 0; it.note = "";
+      fetch(it.src, { mode: "cors", credentials: "omit", cache: "no-store" }).then(function (resp) {
+        if (!resp.ok) throw { fatal: true, msg: "HTTP " + resp.status + (resp.status === 401 || resp.status === 403 ? " (not public)" : resp.status === 404 ? " (not found)" : "") };
+        it.total = Number(resp.headers.get("Content-Length")) || 0;
+        var chunks = [], reader = resp.body.getReader(), checked = false;
+        function read() {
+          return reader.read().then(function (r) {
+            if (r.done) return;
+            chunks.push(r.value); it.loaded += r.value.length;
+            if (!checked && it.loaded >= 16) {
+              checked = true;
+              var first = new Uint8Array(16), off = 0;
+              for (var c = 0; c < chunks.length && off < 16; c++) { var part = chunks[c].subarray(0, 16 - off); first.set(part, off); off += part.length; }
+              var k = kindOf(first);
+              if (k === "html") { reader.cancel(); throw { fatal: true, msg: "link returns a web page, not a video (not public?)" }; }
+              it.kind = k || "mp4";
+            }
+            scheduleRender();
+            return read();
+          });
+        }
+        return read().then(function () {
+          var blob = new Blob(chunks, { type: it.kind === "webm" ? "video/webm" : "video/mp4" });
+          var url = URL.createObjectURL(blob);
+          it.total = it.loaded = blob.size;
+          // Make sure THIS computer can play it (e.g. iPhone HEVC plays on a Mac but often not on Windows)
+          return canPlay(url).then(function (ok) {
+            if (ok === true) { it.blobUrl = url; it.state = "ready"; }
+            else { URL.revokeObjectURL(url); throw { fatal: true, msg: ok }; }
+          });
+        });
+      }).catch(function (err) {
+        if (err && err.fatal) { it.state = "bad"; it.note = err.msg; }
+        else { it.state = "stream"; it.note = "host blocks pre-downloading - will stream live"; }
+      }).then(function () {
+        active--;
+        pump();
+      });
+    }
+
+    // Resolves true, or a message saying why the video can't be shown here
+    function canPlay(url) {
+      return new Promise(function (resolve) {
+        var v = document.createElement("video"), done = false;
+        v.preload = "auto"; v.muted = true;
+        function finish(r) { if (done) return; done = true; clearTimeout(to); v.removeAttribute("src"); v.load(); resolve(r); }
+        var to = setTimeout(function () { finish(true); }, 15000);   // undecided: let playback try
+        v.addEventListener("loadeddata", function () {
+          finish(v.videoWidth > 0 ? true : "video format not supported on this computer (audio only) - ask for an H.264 mp4");
+        });
+        v.addEventListener("error", function () { finish("video format not supported on this computer - ask for an H.264 mp4"); });
+        v.src = url;
+      });
+    }
+
+    function retry(i) {
+      var it = list[i];
+      if (it.blobUrl || !it.src) return;
+      it.state = "queued"; pump();
+    }
+
+    // ---------------- menu rendering ----------------
+    var renderPending = false;
+    function scheduleRender() {
+      if (renderPending) return;
+      renderPending = true;
+      setTimeout(function () { renderPending = false; renderDownloads(); }, 250);
+    }
+
+    function mb(b) { return (b / 1048576).toFixed(b > 104857600 ? 0 : 1) + " MB"; }
+
+    function pillFor(it) {
+      switch (it.state) {
+        case "ready":   return '<span class="pill ready">ready &middot; ' + mb(it.total) + '</span>';
+        case "loading": return '<span class="pill">' + (it.total ? Math.floor(100 * it.loaded / it.total) + "%" : mb(it.loaded)) + '</span>';
+        case "queued":  return '<span class="pill">waiting</span>';
+        case "stream":  return '<span class="pill warn" title="' + esc(it.note) + '">streams live</span>';
+        case "youtube": return '<span class="pill warn" title="Streams from YouTube, needs internet">YouTube &middot; streams</span>';
+        case "bad":     return '<span class="pill bad" title="' + esc(it.note) + '">' + esc(it.note) + '</span>';
+        default:        return '<span class="pill bad">no video link</span>';
+      }
+    }
+
+    function renderMenu() {
+      document.title = PL.name + " - Hackathon Videos";
+      $("plName").textContent = PL.name;
+      $("plSub").textContent = (PL.tasks || []).join(" · ") + "  —  prepared " + PL.generated;
+      var html = "", lastTask = null;
+      list.forEach(function (it, i) {
+        if (it.task !== lastTask) { html += '<li class="group">' + esc(it.task) + '</li>'; lastTask = it.task; }
+        html += '<li><span class="n">' + (i + 1) + '.</span><span class="t" title="' + esc(it.team) + '">' + esc(it.team) + '</span>' +
+          '<span id="pill' + i + '">' + pillFor(it) + '</span>' +
+          '<button class="small retry hidden" id="retry' + i + '" data-i="' + i + '">retry</button>' +
+          '<button class="small jump" data-i="' + i + '">start here</button></li>';
+      });
+      $("items").innerHTML = html;
+      Array.prototype.forEach.call(document.querySelectorAll("button.jump"), function (b) {
+        b.addEventListener("click", function () { start(Number(b.dataset.i)); });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("button.retry"), function (b) {
+        b.addEventListener("click", function () { retry(Number(b.dataset.i)); });
+      });
+      $("startBtn").addEventListener("click", function () { start(0); });
+    }
+
+    function renderDownloads() {
+      var withSrc = list.filter(function (it) { return it.src; });
+      var ready = list.filter(function (it) { return it.state === "ready"; }).length;
+      var pending = list.filter(function (it) { return it.state === "queued" || it.state === "loading"; }).length;
+      var stream = list.filter(function (it) { return it.state === "stream" || it.state === "youtube"; }).length;
+      var bad = list.filter(function (it) { return it.state === "bad" || it.state === "none"; }).length;
+      var bytes = list.reduce(function (s, it) { return s + it.loaded; }, 0);
+
+      $("dlTitle").textContent = pending ? "Downloading videos… " + ready + " of " + withSrc.length + " ready"
+                                         : "Downloads finished: " + ready + " of " + list.length + " videos ready";
+      $("dlBytes").textContent = mb(bytes) + " downloaded";
+      var done = list.reduce(function (s, it) {
+        if (it.state === "loading") return s + (it.total ? it.loaded / it.total : 0);
+        return s + (it.state === "queued" ? 0 : 1);
+      }, 0);
+      $("dlBar").style.width = (list.length ? 100 * done / list.length : 100) + "%";
+
+      var notes = [];
+      if (pending) notes.push("You can start now. Videos not yet downloaded will stream.");
+      if (stream) notes.push(stream + " video" + (stream > 1 ? "s" : "") + " will stream live (needs internet).");
+      if (bad) notes.push(bad + " team" + (bad > 1 ? "s have" : " has") + " no playable video. Their name and scoring pause still show.");
+      $("dlNote").textContent = notes.join(" ");
+      $("dlNote").classList.toggle("hidden", !notes.length);
+      $("startBtn").innerHTML = "&#9654; Start " + esc(PL.name) + (pending ? " (" + ready + "/" + withSrc.length + " downloaded)" : "");
+
+      list.forEach(function (it, i) {
+        var p = $("pill" + i); if (p) p.innerHTML = pillFor(it);
+        var r = $("retry" + i); if (r) r.classList.toggle("hidden", !(it.src && (it.state === "stream" || it.state === "bad")));
+      });
+    }
+
+    // ---------------- playback state ----------------
+    var idx = 0, phase = "idle", paused = false;
+    var timer = null, lastTick = 0;
+    var vids = [$("vA"), $("vB")], cur = 0;   // vids[cur] is the visible player, the other preloads
+
+    function curVid() { return vids[cur]; }
+    function otherVid() { return vids[1 - cur]; }
+
+    function showOnly(id) {
+      ["titleScreen", "scoreScreen", "endScreen"].forEach(function (s) { $(s).classList.toggle("hidden", s !== id); });
+    }
+
+    function stopMedia() {
+      vids.forEach(function (v) { v.pause(); });
+      var yt = $("yt");
+      if (yt.getAttribute("src") && yt.getAttribute("src") !== "about:blank") yt.src = "about:blank";
+      yt.classList.add("hidden");
+    }
+
+    function start(i) {
+      $("menu").classList.add("hidden"); $("stage").classList.remove("hidden");
+      document.body.classList.add("hide-cursor");
+      if (document.documentElement.requestFullscreen && !document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(function () {});
+      }
+      vids.forEach(function (v) { v.muted = false; });
+      paused = false; $("paused").classList.add("hidden");
+      goTo(i);
+    }
+
+    function stopAll() {
+      stopMedia(); timer = null; phase = "idle";
+      $("stage").classList.add("hidden"); $("menu").classList.remove("hidden");
+      document.body.classList.remove("hide-cursor");
+      if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(function () {});
+      renderDownloads();
+    }
+
+    // Make sure the video for item i is loaded in one of the two players.
+    // Returns the player index holding it, or -1.
+    function ensureLoaded(i) {
+      var it = list[i];
+      var src = it && playSrc(it);
+      if (!src) return -1;
+      for (var k = 0; k < 2; k++) if (vids[k].dataset.src === src) return k;
+      var k2 = 1 - cur;
+      vids[k2].dataset.src = src;
+      vids[k2].src = src;
+      vids[k2].load();
+      return k2;
+    }
+
+    function goTo(i) {
+      stopMedia();
+      if (i < 0) i = 0;
+      if (i >= list.length) { showEnd(); return; }
+      idx = i;
+      var k = ensureLoaded(i);
+      if (k >= 0) {
+        cur = k;
+        vids[cur].classList.remove("preload"); otherVid().classList.add("preload");
+        try { vids[cur].currentTime = 0; } catch (e) {}
+      }
+      if (idx + 1 < list.length) ensureLoaded(idx + 1);
+      showTitle(list[i]);
+    }
+
+    // ---------------- phases ----------------
+    function showTitle(it) {
+      phase = "title";
+      $("tag").classList.add("hidden"); updateHud();
+      $("titlePos").textContent = PL.name + "  ·  Team " + (idx + 1) + " of " + list.length;
+      $("titleTeam").textContent = it.team;
+      $("titleTask").textContent = it.task;
+      showOnly("titleScreen");
+      runTimer(settings.titleSec, $("titleBar"), function () { playVideo(it); }, null);
+    }
+
+    function playVideo(it) {
+      phase = "video";
+      showOnly(null);
+      $("tag").textContent = it.team; $("tag").classList.remove("hidden");
+      timer = null;
+      var src = playSrc(it);
+      if (src) {
+        // the download may have finished since this item was queued in a player
+        if (curVid().dataset.src !== src) { var k = ensureLoaded(idx); if (k >= 0) cur = k; }
+        var v = curVid();
+        v.classList.remove("preload"); otherVid().classList.add("preload");
+        var p = v.play();
+        if (p && p.catch) p.catch(function (e) {
+          if (e && e.name === "NotAllowedError") { v.muted = true; v.play().catch(function () { videoFailed(it, "Video could not be played"); }); }
+        });
+        if (paused) v.pause();
+      } else if (it.youtube) {
+        var yt = $("yt");
+        yt.classList.remove("hidden");
+        yt.src = "https://www.youtube.com/embed/" + encodeURIComponent(it.youtube) + "?autoplay=1&rel=0&modestbranding=1&playsinline=1";
+        // We can't see when an embedded YouTube video ends, so give it a fixed slot.
+        runTimer(settings.maxSec > 0 ? settings.maxSec : 47, null, function () { afterVideo(it, null); }, null);
+      } else {
+        videoFailed(it, "No playable video for this team" + (it.note || it.problem ? " (" + (it.note || it.problem) + ")" : ""));
+      }
+    }
+
+    function videoFailed(it, msg) {
+      if (phase !== "video") return;
+      afterVideo(it, msg);
+    }
+
+    function afterVideo(it, note) {
+      stopMedia();
+      phase = "score";
+      $("tag").classList.add("hidden");
+      $("scoreTeam").textContent = it.team;
+      $("scoreNote").textContent = note || "";
+      $("scoreNote").classList.toggle("hidden", !note);
+      var nxt = list[idx + 1];
+      $("scoreNext").innerHTML = nxt ? "Up next: <b>" + esc(nxt.team) + "</b>" : "That was the last team in " + esc(PL.name);
+      showOnly("scoreScreen");
+      if (nxt) ensureLoaded(idx + 1);
+      runTimer(settings.scoreSec, $("scoreBar"), function () { goTo(idx + 1); }, $("scoreCount"));
+    }
+
+    function showEnd() {
+      phase = "end"; timer = null;
+      $("tag").classList.add("hidden"); $("hud").classList.add("hidden");
+      $("endName").textContent = PL.name;
+      showOnly("endScreen");
+    }
+
+    function updateHud() {
+      $("hud").textContent = (idx + 1) + " / " + list.length;
+      $("hud").classList.remove("hidden");
+    }
+
+    // ---------------- video events ----------------
+    vids.forEach(function (v) {
+      v.addEventListener("ended", function () {
+        if (v === curVid() && phase === "video") afterVideo(list[idx], null);
+      });
+      v.addEventListener("timeupdate", function () {
+        if (v === curVid() && phase === "video" && settings.maxSec > 0 && v.currentTime >= settings.maxSec) afterVideo(list[idx], null);
+      });
+      v.addEventListener("error", function () {
+        if (v === curVid() && phase === "video") videoFailed(list[idx], "Video could not be played");
+      });
+    });
+
+    // ---------------- pausable countdown ----------------
+    function runTimer(sec, bar, onDone, countEl) {
+      timer = { remaining: sec * 1000, total: sec * 1000, onDone: onDone, bar: bar, countEl: countEl };
+      lastTick = performance.now();
+      drawTimer();
+    }
+    function drawTimer() {
+      if (!timer) return;
+      var frac = 1 - timer.remaining / timer.total;
+      if (timer.bar) timer.bar.style.width = (Math.min(1, frac) * 100) + "%";
+      if (timer.countEl) timer.countEl.textContent = Math.max(0, Math.ceil(timer.remaining / 1000));
+    }
+    function tick(now) {
+      var dt = now - lastTick; lastTick = now;
+      if (timer && !paused) {
+        timer.remaining -= dt;
+        drawTimer();
+        if (timer.remaining <= 0) { var done = timer.onDone; timer = null; done(); }
+      }
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(function (t) { lastTick = t; tick(t); });
+
+    // ---------------- keyboard ----------------
+    function togglePause() {
+      if (phase === "idle" || phase === "end") return;
+      paused = !paused;
+      $("paused").classList.toggle("hidden", !paused);
+      if (phase === "video" && playSrc(list[idx])) { if (paused) curVid().pause(); else curVid().play().catch(function () {}); }
+    }
+    document.addEventListener("keydown", function (e) {
+      if ($("stage").classList.contains("hidden")) return;
+      var k = e.key;
+      if (k === " " || k === "Spacebar" || k === "k") { e.preventDefault(); togglePause(); }
+      else if (k === "ArrowRight") {
+        e.preventDefault();
+        if (phase === "title") { timer = null; playVideo(list[idx]); }
+        else if (phase === "video") afterVideo(list[idx], null);
+        else if (phase === "score") goTo(idx + 1);
+      }
+      else if (k === "ArrowLeft") {
+        e.preventDefault();
+        if (phase === "end") goTo(list.length - 1);
+        else if (phase === "title") goTo(idx - 1);
+        else goTo(idx);
+      }
+      else if (k === "r" || k === "R") { if (phase !== "end") { goTo(idx); timer = null; playVideo(list[idx]); } }
+      else if (k === "f" || k === "F") {
+        if (document.fullscreenElement) document.exitFullscreen().catch(function () {});
+        else document.documentElement.requestFullscreen().catch(function () {});
+      }
+      else if (k === "Escape") { stopAll(); }
+    });
+
+    window.addEventListener("beforeunload", function (e) {
+      if (list.some(function (it) { return it.blobUrl; })) { e.preventDefault(); e.returnValue = ""; }
+    });
+
+    renderMenu();
+    pump();
+  }
+})();
+</script>
+</body>
+</html>
