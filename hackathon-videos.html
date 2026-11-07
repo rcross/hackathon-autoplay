@@ -239,9 +239,16 @@
     </div>
 
     <div class="card" style="margin-top:20px">
-      <h2 style="font-size:16px">Videos saved on this computer <small id="cacheStats"></small></h2>
-      <div class="muted" id="cacheWhere"></div>
-      <div class="row" style="margin-top:10px"><button class="btn" id="cacheClear">Delete saved videos</button></div>
+      <label class="row" style="gap:10px;cursor:pointer;font-size:15px">
+        <input type="checkbox" id="keepSaved" style="width:18px;height:18px">
+        <span><b>Keep videos on this computer after closing</b> <span class="muted">(for poor internet at the venue)</span></span>
+      </label>
+      <div class="muted" id="keepNote" style="margin-top:6px"></div>
+      <div id="cacheBox" class="hidden" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+        <h2 style="font-size:16px;margin:0 0 6px">Videos saved on this computer <small id="cacheStats"></small></h2>
+        <div class="muted" id="cacheWhere"></div>
+        <div class="row" style="margin-top:10px"><button class="btn" id="cacheClear">Delete saved videos</button></div>
+      </div>
       <div class="msg" id="cacheMsg"></div>
     </div>
   </div>
@@ -898,8 +905,8 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
     function download(it) {
       active++;
       it.state = "loading"; it.loaded = 0; it.total = 0; it.note = "";
-      // Use the copy saved on this computer if there is one, otherwise download it
-      VCACHE.get(it.primary).then(function (hit) {
+      // With "keep videos" on, use the copy saved on this computer if there is one; otherwise download it
+      (keepSaved() ? VCACHE.get(it.primary) : Promise.resolve(null)).then(function (hit) {
         if (!hit || !hit.blob) return false;
         var url = URL.createObjectURL(hit.blob);
         return canPlay(url).then(function (ok) {
@@ -951,8 +958,8 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
           // Make sure THIS computer can play it (e.g. iPhone HEVC plays on a Mac but often not on Windows)
           return canPlay(url).then(function (ok) {
             if (ok !== true) { URL.revokeObjectURL(url); throw { fatal: true, msg: ok }; }
-            it.blobUrl = url; it.state = "ready";
-            VCACHE.put(it.primary, { blob: blob, team: it.team, saved: Date.now() }).then(showCache);
+            it.blobUrl = url; it.state = "ready"; it.blob = blob;
+            if (keepSaved()) saveCopy(it);
           });
         });
       }).catch(function (err) { clearTimeout(idle); throw err; });
@@ -1006,23 +1013,54 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
       return { browser: edge ? "Edge" : "Chrome", folder: profile + sep + "IndexedDB" + sep + "file__0.indexeddb.blob",
                versionPage: edge ? "edge://version" : "chrome://version" };
     }
+    // Off by default: videos live only in this tab and are gone when it closes
+    function keepSaved() { return $("keepSaved").checked; }
+    $("keepSaved").checked = !!lsGet("hackathonKeepVideos", false);
+    function saveCopy(it) {
+      if (!it.blob || it.cached) return Promise.resolve();
+      return VCACHE.put(it.primary, { blob: it.blob, team: it.team, saved: Date.now() }).then(function () { it.cached = true; showCache(); renderDownloads(); });
+    }
+    $("keepSaved").addEventListener("change", function () {
+      lsSet("hackathonKeepVideos", keepSaved());
+      if (keepSaved()) list.forEach(function (it) { if (it.state === "ready") saveCopy(it); });   // save what's already downloaded
+      showCache();
+    });
+    // Does the saved-videos database exist at all? (Avoids creating it when keeping is off)
+    function cacheExists() {
+      if (keepSaved()) return Promise.resolve(true);
+      if (!indexedDB.databases) return Promise.resolve(true);
+      return indexedDB.databases().then(function (dbs) { return dbs.some(function (d) { return d.name === "hackathon-videos"; }); }, function () { return true; });
+    }
+    var savedCount = 0;
     function showCache() {
-      var loc = cacheLocation();
-      $("cacheWhere").innerHTML =
-        "Downloaded videos are kept by " + loc.browser + ", so opening a playlist again later doesn't download them again. " +
-        "They are stored in the browser's own storage for pages opened from files, usually in:<br><code>" + esc(loc.folder) + "</code><br>" +
-        "If you use another " + loc.browser + " profile, open <code>" + loc.versionPage + "</code> and use the “Profile path” it shows in place of the part before <code>IndexedDB</code>. " +
-        "The files there are numbered, not named by team, so delete them with the button below rather than by hand.";
-      VCACHE.all().then(function (rows) {
+      $("keepNote").textContent = keepSaved()
+        ? "Downloaded videos are saved, so opening a playlist again later (even after a restart) doesn't download them again."
+        : "Videos are kept only while this tab is open, and nothing is left on the computer afterwards. Closing or reloading the tab means downloading them again.";
+      return cacheExists().then(function (exists) {
+        if (!exists) return [];
+        return VCACHE.all();
+      }).then(function (rows) {
+        savedCount = rows.length;
         var bytes = rows.reduce(function (sum, r) { return sum + (r && r.blob ? r.blob.size : 0); }, 0);
+        $("cacheBox").classList.toggle("hidden", !keepSaved() && !rows.length);
         $("cacheStats").textContent = rows.length ? rows.length + " video" + (rows.length > 1 ? "s" : "") + ", " + mb(bytes) : "none saved yet";
         $("cacheClear").disabled = !rows.length;
         $("cacheClear").dataset.count = rows.length; $("cacheClear").dataset.bytes = bytes;
+        showCacheWhere();
       }).catch(function () {
+        savedCount = 0;
+        $("cacheBox").classList.toggle("hidden", !keepSaved());
         $("cacheStats").textContent = "not available";
         $("cacheWhere").textContent = "This browser isn't letting the page save videos (for example in a private window), so videos are downloaded again each time the page is opened.";
         $("cacheClear").disabled = true;
       });
+    }
+    function showCacheWhere() {
+      var loc = cacheLocation();
+      $("cacheWhere").innerHTML =
+        "Stored by " + loc.browser + " in its own storage for pages opened from files, usually in:<br><code>" + esc(loc.folder) + "</code><br>" +
+        "If you use another " + loc.browser + " profile, open <code>" + loc.versionPage + "</code> and use the “Profile path” it shows in place of the part before <code>IndexedDB</code>. " +
+        "The files there are numbered, not named by team, so delete them with the button below rather than by hand.";
     }
     function clearSaved() {
       return VCACHE.clear().then(function () {
@@ -1278,14 +1316,20 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
       runTimer(settings.scoreSec, $("scoreBar"), function () { goTo(idx + 1); }, $("scoreCount"));
     }
 
+    var finished = false;
     function showEnd() {
-      phase = "end"; timer = null;
+      phase = "end"; timer = null; finished = true;
       $("tag").classList.add("hidden"); $("hud").classList.add("hidden");
       $("endName").textContent = PL.name;
       document.body.classList.remove("hide-cursor");   // the buttons need the mouse
-      var n = list.filter(function (it) { return it.cached || it.blobUrl; }).length;
-      $("endNote").textContent = n ? n + " video" + (n === 1 ? " is" : "s are") + " saved on this computer. “Delete saved videos and exit” removes them (for every playlist page)." : "";
-      $("endClear").disabled = !n;
+      $("endClear").classList.add("hidden"); $("endNote").textContent = "";
+      showCache().then(function () {
+        var n = savedCount;
+        $("endClear").classList.toggle("hidden", !n); $("endClear").disabled = !n;
+        $("endNote").textContent = n
+          ? n + " video" + (n === 1 ? " is" : "s are") + " saved on this computer. “Delete saved videos and exit” removes them (for every playlist page)."
+          : "Nothing is saved on this computer; the videos are cleared when this tab closes.";
+      });
       showOnly("endScreen");
     }
     $("endAgain").addEventListener("click", function () { document.body.classList.add("hide-cursor"); paused = false; $("paused").classList.add("hidden"); goTo(0); });
@@ -1441,7 +1485,8 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
     });
 
     window.addEventListener("beforeunload", function (e) {
-      if (list.some(function (it) { return it.blobUrl; })) { e.preventDefault(); e.returnValue = ""; }
+      // Warn before losing downloads mid-session; not once the playlist has finished, or if everything is saved
+      if (!finished && list.some(function (it) { return it.blobUrl && !it.cached; })) { e.preventDefault(); e.returnValue = ""; }
     });
 
     renderMenu();
