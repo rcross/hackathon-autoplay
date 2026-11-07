@@ -116,6 +116,10 @@
   #hud { position: absolute; right: 16px; top: 16px; background: rgba(0,0,0,.55); padding: 6px 12px; border-radius: 8px; font-size: 14px; color: #fff; pointer-events: none; }
   #paused { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.5); font-size: clamp(32px, 5vw, 72px); font-weight: 800; letter-spacing: .1em; pointer-events: none; }
   body.hide-cursor #stage { cursor: none; }
+  .endbtns { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; margin-top: 5vh; }
+  .endbtns .btn { font-size: clamp(16px, 1.8vw, 24px); padding: 14px 26px; }
+  .btn.danger { border-color: rgba(255,93,93,.6); color: var(--bad); }
+  .btn.danger:hover:not(:disabled) { background: rgba(255,93,93,.12); border-color: var(--bad); }
 </style>
 </head>
 <body>
@@ -278,7 +282,12 @@
   <div id="endScreen" class="screen hidden">
     <div class="eyebrow">That's all the videos in</div>
     <div class="team" id="endName"></div>
-    <div class="next">Press <kbd>Esc</kbd> to return to the menu</div>
+    <div class="endbtns">
+      <button class="btn primary" id="endAgain">&#8635; Play all again</button>
+      <button class="btn" id="endExit">Exit</button>
+      <button class="btn danger" id="endClear">Delete saved videos and exit</button>
+    </div>
+    <div class="next" id="endNote" style="font-size:clamp(14px,1.4vw,20px)"></div>
   </div>
 
   <div id="tag" class="hidden"></div>
@@ -1015,14 +1024,17 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
         $("cacheClear").disabled = true;
       });
     }
+    function clearSaved() {
+      return VCACHE.clear().then(function () {
+        list.forEach(function (it) { it.cached = false; });
+        setMsg("cacheMsg", "ok", "Saved videos deleted from this computer. Videos already loaded in this tab still play until you close it; next time the page is opened they download again.");
+        showCache(); renderDownloads();
+      }).catch(function (e) { setMsg("cacheMsg", "bad", "Couldn't delete the saved videos: " + esc(e && e.message || e)); throw e; });
+    }
     $("cacheClear").addEventListener("click", function () {
       var n = Number($("cacheClear").dataset.count || 0), bytes = Number($("cacheClear").dataset.bytes || 0);
       if (!window.confirm("Delete " + n + " saved video" + (n === 1 ? "" : "s") + " (" + mb(bytes) + ") from this computer?")) return;
-      VCACHE.clear().then(function () {
-        list.forEach(function (it) { it.cached = false; });
-        setMsg("cacheMsg", "ok", "Deleted. Videos already loaded in this tab still play until you close it; next time the page is opened they download again.");
-        showCache(); renderDownloads();
-      }).catch(function (e) { setMsg("cacheMsg", "bad", "Couldn't delete the saved videos: " + esc(e && e.message || e)); });
+      clearSaved().catch(function () {});
     });
     function setMsg(id, cls, html) { var m = $(id); m.className = "msg " + (cls || ""); m.innerHTML = html; }
 
@@ -1155,7 +1167,7 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
     }
 
     function stopAll() {
-      stopMedia(); timer = null; phase = "idle";
+      stopMedia(); timer = null; phase = "idle"; showOnly(null);
       $("stage").classList.add("hidden"); $("menu").classList.remove("hidden");
       document.body.classList.remove("hide-cursor");
       if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(function () {});
@@ -1270,8 +1282,18 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
       phase = "end"; timer = null;
       $("tag").classList.add("hidden"); $("hud").classList.add("hidden");
       $("endName").textContent = PL.name;
+      document.body.classList.remove("hide-cursor");   // the buttons need the mouse
+      var n = list.filter(function (it) { return it.cached || it.blobUrl; }).length;
+      $("endNote").textContent = n ? n + " video" + (n === 1 ? " is" : "s are") + " saved on this computer. “Delete saved videos and exit” removes them (for every playlist page)." : "";
+      $("endClear").disabled = !n;
       showOnly("endScreen");
     }
+    $("endAgain").addEventListener("click", function () { document.body.classList.add("hide-cursor"); paused = false; $("paused").classList.add("hidden"); goTo(0); });
+    $("endExit").addEventListener("click", function () { stopAll(); });
+    $("endClear").addEventListener("click", function () {
+      $("endClear").disabled = true;
+      clearSaved().then(function () { stopAll(); }, function () { stopAll(); });
+    });
 
     function updateHud() {
       $("hud").textContent = (idx + 1) + " / " + list.length;
