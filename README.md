@@ -14,6 +14,7 @@ It's all one file, `hackathon-videos.html`, with nothing to install. It works on
 Open **`hackathon-videos.html`** in Chrome (double-click it, or drag it onto Chrome).
 
 1. **Load the form responses.** Click **Load from Google Sheet**. This only works if the sheet is shared as "anyone with the link". Otherwise, in the sheet choose **File → Download → Comma-separated values (.csv)** and drop that file onto the page.
+   - **Columns:** once the responses load, dropdowns choose which column is the **team name**, the **video link** and the **task** to group by ("don't group" is an option). There's also a **cut-off** length for videos (default 60 s). They default to this hackathon's form and are remembered, so the tool works with other forms too.
    - Test submissions (team names like `dummy1` or `test`) are ignored.
    - If a team submitted more than once, its latest submission is used.
 2. **Playlists.** All Machine Learning tasks (task name contains "Machine Learning" or "ML") go in Playlist 1. Other tasks are placed to balance the two sizes. Click **move** on any task to change it. Your changes are remembered.
@@ -21,8 +22,8 @@ Open **`hackathon-videos.html`** in Chrome (double-click it, or drag it onto Chr
    - **ready**: plays, and can be pre-downloaded
    - **streams only**: plays, but the host blocks pre-downloading (Google Drive without an API key), or it's a YouTube link. It needs internet during judging.
    - **problem**: not public, opens a web page instead of a video, not found, a Drive folder or other non-video file, a deleted YouTube video, a format the browser can't play, or no link. These teams get a "not working" card during judging (see below).
-   - Videos longer than 60 s are flagged too (wrong video submitted?)
-4. **Save** Playlist 1, Playlist 2 and the running order. They go to your Downloads folder with the date and time in the name, so earlier versions are never overwritten.
+   - Videos longer than the cut-off are flagged too (wrong video submitted?)
+4. **Save** Playlist 1, Playlist 2, **All teams** (every team in one playlist: Playlist 1's tasks, then Playlist 2's) and the running order. The cut-off chosen in step 1 is built into each playlist file. They go to your Downloads folder with the date and time in the name, so earlier versions are never overwritten.
 
 When teams fix their links, reload the responses and save again.
 
@@ -38,7 +39,7 @@ Copy a saved playlist file to the judging computer and open it in Chrome or Edge
 
 - Videos start downloading straight away. Each one shows **waiting / % / ready / streams live / problem**, with a **retry** button for failures.
 - Click **Start** once everything shows *ready*. You can start earlier: anything not yet downloaded streams instead.
-- Keep the tab open. Videos are held by the tab, so reloading it downloads them again.
+- **Downloaded videos are saved on that computer**, so opening a playlist again later (even after a restart) doesn't download them again. The page shows how many are saved and where. They are in the browser's storage for pages opened from files, usually `%LOCALAPPDATA%\Google\Chrome\User Data\Default\IndexedDB\file__0.indexeddb.blob` (Edge: `…\Microsoft\Edge\User Data\Default\…`). Use **Delete saved videos** on the playlist page to remove them after the event. The files are numbered, not named by team, so don't delete them by hand.
 - **After the one click on Start, it runs by itself to the end.** Browsers only allow sound after a click on the page, which is why one click is needed.
 - **A video that doesn't work** (broken link, or a stream that doesn't start within 20 s or stalls for 15 s) shows the team name and *"Sorry, this team's video isn't working"* for 6 s, then moves on to the next team with no scoring pause. If it breaks after at least 30 s of playing, the judges get the normal scoring pause instead.
 - Fully hands-free option: open the file with `#autostart` at the end of its address (e.g. `file:///C:/Users/me/Desktop/playlist-1.html#autostart`). It then starts by itself once downloads finish. Without a click, the browser may play videos muted.

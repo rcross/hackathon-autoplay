@@ -66,6 +66,9 @@
   .summary { display: flex; gap: 16px; flex-wrap: wrap; margin: 4px 0 8px; font-size: 14px; }
   .summary b { font-size: 18px; margin-right: 4px; }
   .downloads { display: flex; gap: 10px; flex-wrap: wrap; }
+  .mapgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px 16px; }
+  .mapgrid label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  .mapgrid select { width: 100%; }
 
   /* ---------- lists ---------- */
   .progress { height: 10px; background: var(--bg); border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }
@@ -134,6 +137,20 @@
       </div>
       <div class="msg" id="loadMsg"></div>
 
+      <div id="mapBox" class="hidden" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">
+        <div class="muted" style="margin-bottom:8px">Columns to use from the responses (remembered for next time):</div>
+        <div class="mapgrid">
+          <label>Team name <select id="mapTeam"></select></label>
+          <label>Video link <select id="mapVideo"></select></label>
+          <label>Group teams by (task) <select id="mapTask"></select></label>
+          <label>Cut off videos after <select id="cutoff">
+            <option value="30">30 seconds</option><option value="45">45 seconds</option><option value="60">60 seconds</option>
+            <option value="75">75 seconds</option><option value="90">90 seconds</option><option value="120">2 minutes</option>
+            <option value="180">3 minutes</option><option value="300">5 minutes</option><option value="0">Never (play to the end)</option>
+          </select></label>
+        </div>
+      </div>
+
       <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
         <div class="row">
           <input type="text" id="driveKey" spellcheck="false" autocomplete="off" placeholder="Google Drive API key (only needed for Google Drive links)">
@@ -179,10 +196,11 @@
 
     <div class="card hidden" id="saveCard">
       <h2><span class="stepno">4</span> Save the playlist files</h2>
-      <div class="muted" style="margin-bottom:12px">Copy these files to the judging computer(s) and open them in Chrome or Edge. Each file contains only its own playlist and downloads only those videos.</div>
+      <div class="muted" style="margin-bottom:12px">Copy these files to the judging computer(s) and open them in Chrome or Edge. Each file contains only its own playlist and downloads only those videos. “All teams” is one playlist with every team: Playlist 1's tasks, then Playlist 2's.</div>
       <div class="downloads">
         <button class="btn primary" id="save1">Save Playlist 1</button>
         <button class="btn primary" id="save2">Save Playlist 2</button>
+        <button class="btn primary" id="saveAll">Save all teams (one playlist)</button>
         <button class="btn" id="saveOrder">Save running order (.txt)</button>
       </div>
       <div class="msg" id="saveMsg"></div>
@@ -213,8 +231,14 @@
     <div class="keys">
       <kbd>Space</kbd> pause / resume &nbsp; <kbd>&rarr;</kbd> skip ahead &nbsp; <kbd>&larr;</kbd> back &nbsp;
       <kbd>R</kbd> replay this team's video &nbsp; <kbd>F</kbd> fullscreen &nbsp; <kbd>Esc</kbd> stop and return here<br>
-      Click <b>Start</b> once. After that every team plays automatically to the end; a broken video shows a short message and moves on.<br>
-      Keep this tab open: closing or reloading it means downloading the videos again.
+      Click <b>Start</b> once. After that every team plays automatically to the end; a broken video shows a short message and moves on.
+    </div>
+
+    <div class="card" style="margin-top:20px">
+      <h2 style="font-size:16px">Videos saved on this computer <small id="cacheStats"></small></h2>
+      <div class="muted" id="cacheWhere"></div>
+      <div class="row" style="margin-top:10px"><button class="btn" id="cacheClear">Delete saved videos</button></div>
+      <div class="msg" id="cacheMsg"></div>
     </div>
   </div>
 </div>
@@ -303,7 +327,7 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
       sheetUrl: "https://docs.google.com/spreadsheets/d/1TuKzcx9GDQsScX8izS0m_QAssY0nIFnrsKUOXsBLABI/edit?gid=1733447410#gid=1733447410",
       mlPattern: /machine\s*learning|\bML\b/i,
       ignoreTeam: /^\s*(dummy|test)\d*\s*$/i,
-      longVideoSec: 60      // warn about videos longer than this (wrong video submitted?)
+      // the cut-off length is chosen on the page (step 1)
     };
     $("prep").classList.remove("hidden");
     document.title = "Hackathon Videos - Prepare Playlists";
@@ -394,26 +418,58 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
       return rows.filter(function (r) { return r.some(function (v) { return v.trim() !== ""; }); });
     }
 
+    // ---------- columns ----------
+    var csvRows = null, csvSource = "";
+    var COL_DEFAULTS = { team: /^team name/i, video: /45 second|video/i, task: /task/i };
+    function fillSelect(sel, head, chosen, allowNone) {
+      sel.innerHTML = (allowNone ? '<option value="-1">(don\'t group)</option>' : "") +
+        head.map(function (h, i) { return '<option value="' + i + '">' + esc(h || "Column " + (i + 1)) + '</option>'; }).join("");
+      sel.value = String(chosen);
+    }
+    function pickColumn(head, savedName, re, fallback) {
+      var i = savedName ? head.indexOf(savedName) : -1;
+      if (i < 0) for (var k = 0; k < head.length; k++) if (re.test(head[k])) { i = k; break; }
+      return i >= 0 ? i : fallback;
+    }
+
     function loadCsv(text, source) {
       var rows = parseCsv(text);
       if (rows.length < 2) { setMsg("loadMsg", "bad", "No submissions found in " + esc(source) + "."); return; }
+      csvRows = rows; csvSource = source;
       var head = rows[0].map(function (h) { return h.trim(); });
-      function col(re) { for (var i = 0; i < head.length; i++) if (re.test(head[i])) return i; return -1; }
-      var cTeam = col(/^team name/i), cTask = col(/task/i), cVid = col(/45 second/i);
-      if (cTeam < 0 || cTask < 0 || cVid < 0) {
-        setMsg("loadMsg", "bad", "Couldn't find the Team name / task / 45 second video columns in " + esc(source) + ".");
-        return;
-      }
+      var saved = lsGet("prepColumns", {});
+      fillSelect($("mapTeam"), head, pickColumn(head, saved.team, COL_DEFAULTS.team, 0), false);
+      fillSelect($("mapVideo"), head, pickColumn(head, saved.video, COL_DEFAULTS.video, Math.min(1, head.length - 1)), false);
+      fillSelect($("mapTask"), head, pickColumn(head, saved.task, COL_DEFAULTS.task, -1), true);
+      $("mapBox").classList.remove("hidden");
+      applyColumns();
+    }
+    ["mapTeam", "mapVideo", "mapTask"].forEach(function (id) { $(id).addEventListener("change", applyColumns); });
+
+    // Cut-off: videos longer than this are flagged here and cut off in the playlist
+    $("cutoff").value = String(lsGet("prepCutoff", 60));
+    function cutoffSec() { return Number($("cutoff").value) || 0; }
+    $("cutoff").addEventListener("change", function () {
+      lsSet("prepCutoff", cutoffSec());
+      if (teams.length) startChecks();
+    });
+
+    function applyColumns() {
+      var head = csvRows[0].map(function (h) { return h.trim(); });
+      var cTeam = Number($("mapTeam").value), cVid = Number($("mapVideo").value), cTask = Number($("mapTask").value);
+      lsSet("prepColumns", { team: head[cTeam], video: head[cVid], task: cTask >= 0 ? head[cTask] : null });
       var byTeam = {}, notes = [];
-      rows.slice(1).forEach(function (r, i) {
-        var team = (r[cTeam] || "").trim();
+      csvRows.slice(1).forEach(function (r, i) {
+        var team = (r[cTeam] || "").replace(/\s+/g, " ").trim();
         if (!team) return;
         if (CFG.ignoreTeam.test(team)) { notes.push("ignored test submission “" + esc(team) + "”"); return; }
         var key = team.toLowerCase();
         if (byTeam[key]) notes.push("“" + esc(team) + "” submitted more than once, so the latest is used");
-        byTeam[key] = { order: i, team: team, task: (r[cTask] || "").trim() || "(no task)", url: (r[cVid] || "").trim() };
+        var task = cTask >= 0 ? (r[cTask] || "").trim() || "(no task)" : "All teams";
+        byTeam[key] = { order: i, team: team, task: task, url: (r[cVid] || "").trim() };
       });
       teams = Object.keys(byTeam).map(function (k) { return byTeam[k]; }).sort(function (a, b) { return a.order - b.order; });
+      var source = csvSource;
       teams.forEach(function (t) {
         var res = resolveUrl(t.url);
         t.src = res.src; t.youtube = res.youtube; t.folder = !!res.folder; t.driveId = res.driveId || null; t.driveRk = res.driveRk || null;
@@ -476,7 +532,7 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
     function renderSplit() {
       var html = "";
       [1, 2].forEach(function (p) {
-        html += '<div class="col"><h3>Playlist ' + p + '<span>' + count(p) + ' videos</span></h3>';
+        html += '<div class="col"><h3>Playlist ' + p + '<span>' + count(p) + (count(p) === 1 ? ' video' : ' videos') + '</span></h3>';
         groups.filter(function (g) { return assign[g.task] === p; }).forEach(function (g) {
           html += '<div class="taskrow"><span class="nm">' + esc(g.task) + (g.ml ? '<span class="ml">ML</span>' : "") + '</span>' +
             '<span class="ct">' + g.count + '</span><button data-task="' + esc(g.task) + '">move to ' + (3 - p) + '</button></div>';
@@ -545,8 +601,8 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
       });
     }
     function finishWithDuration(t) {
-      if (t.duration && t.duration > CFG.longVideoSec) {
-        t.problem = (t.problem ? t.problem + "; " : "") + "video is " + fmtDur(t.duration) + " long - wrong video submitted?";
+      if (t.duration && cutoffSec() && t.duration > cutoffSec() + 1) {
+        t.problem = (t.problem ? t.problem + "; " : "") + "video is " + fmtDur(t.duration) + " long, so it will be cut off at " + fmtDur(cutoffSec());
         if (t.check === "ready") t.check = "readyWarn";
       }
     }
@@ -680,7 +736,7 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
         else if (t.check === "stream") c.stream++;
         else if (t.check === "bad") c.bad++;
         if (t.check !== "pending" && t.check !== "checking") c.done++;
-        if (t.duration && t.duration > CFG.longVideoSec) c.long++;
+        if (t.duration && cutoffSec() && t.duration > cutoffSec() + 1) c.long++;
       });
       $("checkBar").style.width = (teams.length ? 100 * c.done / teams.length : 0) + "%";
       $("checkSub").textContent = c.done < teams.length ? "checking " + c.done + " of " + teams.length + "…" : "finished " + new Date().toLocaleTimeString();
@@ -688,7 +744,7 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
         '<span style="color:var(--good)"><b>' + c.ready + '</b>ready</span>' +
         '<span style="color:var(--accent)"><b>' + c.stream + '</b>streams only</span>' +
         '<span style="color:var(--bad)"><b>' + c.bad + '</b>problem' + (c.bad === 1 ? "" : "s") + '</span>' +
-        (c.long ? '<span style="color:var(--accent)"><b>' + c.long + '</b>over ' + CFG.longVideoSec + ' s</span>' : "");
+        (c.long ? '<span style="color:var(--accent)"><b>' + c.long + '</b>longer than the ' + fmtDur(cutoffSec()) + ' cut-off</span>' : "");
       var html = "";
       [1, 2].forEach(function (p) {
         var last = null;
@@ -721,27 +777,35 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
       document.body.appendChild(a); a.click();
       setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
     }
+    // p = 1 or 2 for one playlist, 0 for every team in one playlist
+    function teamsFor(p) { return p ? playlistTeams(p) : playlistTeams(1).concat(playlistTeams(2)); }
+    function tasksFor(p) {
+      var order = p ? [p] : [1, 2], out = [];
+      order.forEach(function (q) { groups.forEach(function (g) { if (assign[g.task] === q) out.push(g.task); }); });
+      return out;
+    }
     function buildPlaylist(p) {
-      var items = playlistTeams(p).map(function (t) {
+      var title = p ? "Playlist " + p : "All teams";
+      var items = teamsFor(p).map(function (t) {
         // Drive files checked through the API download through it; the plain Drive link is the fallback
         return { team: t.team, task: t.task, url: t.url, src: t.dl || t.src, alt: t.dl ? t.src : null,
                  hdr: t.dl && t.driveRk ? driveHeaders(t) : null, youtube: t.youtube,
                  check: t.check, problem: t.problem, duration: t.duration ? Math.round(t.duration) : null };
       });
       var now = new Date();
-      var data = { name: "Playlist " + p, generated: now.toLocaleDateString() + " " + now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-                   tasks: groups.filter(function (g) { return assign[g.task] === p; }).map(function (g) { return g.task; }), items: items };
+      var data = { name: title, generated: now.toLocaleDateString() + " " + now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                   tasks: tasksFor(p), maxSec: cutoffSec(), items: items };
       var json = JSON.stringify(data).replace(/</g, "\\u003c");  // so a team name can't end the script tag early
       var marker = "/*__PLAYLIST_" + "DATA__*/null";
       var html = SOURCE.replace(marker, function () { return json; })
-                       .replace(/<title>[^<]*<\/title>/, function () { return "<title>Playlist " + p + " - Hackathon Videos</title>"; });
+                       .replace(/<title>[^<]*<\/title>/, function () { return "<title>" + title + " - Hackathon Videos</title>"; });
       return html;
     }
-    [1, 2].forEach(function (p) {
-      $("save" + p).addEventListener("click", function () {
-        var name = "playlist-" + p + "_" + stamp() + ".html";
+    [1, 2, 0].forEach(function (p) {
+      $(p ? "save" + p : "saveAll").addEventListener("click", function () {
+        var name = "playlist-" + (p || "all") + "_" + stamp() + ".html";
         saveFile(name, buildPlaylist(p), "text/html");
-        setMsg("saveMsg", "ok", "Saved <b>" + esc(name) + "</b> (" + count(p) + " videos) to your Downloads folder.");
+        setMsg("saveMsg", "ok", "Saved <b>" + esc(name) + "</b> (" + teamsFor(p).length + " videos) to your Downloads folder.");
       });
     });
     $("saveOrder").addEventListener("click", function () {
@@ -768,8 +832,10 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
     $("menu").classList.remove("hidden");
 
     // ---------------- settings ----------------
-    var defaults = { titleSec: 5, scoreSec: 12, maxSec: 60, failSec: 6 };
-    var settings = Object.assign({}, defaults, lsGet("hackathonPlayerSettings", {}));
+    // The cut-off comes from the playlist file (chosen when it was prepared); the other timings are remembered on this computer
+    var defaults = { titleSec: 5, scoreSec: 12, maxSec: typeof PL.maxSec === "number" ? PL.maxSec : 60, failSec: 6 };
+    var saved = lsGet("hackathonPlayerSettings", {}); delete saved.maxSec;
+    var settings = Object.assign({}, defaults, saved);
     function bindSetting(id, key) {
       var el = $(id);
       el.value = settings[key];
@@ -777,7 +843,8 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
         var v = Number(el.value);
         if (!isFinite(v) || v < Number(el.min)) v = defaults[key];
         settings[key] = v; el.value = v;
-        lsSet("hackathonPlayerSettings", settings);
+        var keep = Object.assign({}, settings); delete keep.maxSec;
+        lsSet("hackathonPlayerSettings", keep);
       });
     }
     bindSetting("setTitle", "titleSec");
@@ -822,11 +889,31 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
     function download(it) {
       active++;
       it.state = "loading"; it.loaded = 0; it.total = 0; it.note = "";
+      // Use the copy saved on this computer if there is one, otherwise download it
+      VCACHE.get(it.primary).then(function (hit) {
+        if (!hit || !hit.blob) return false;
+        var url = URL.createObjectURL(hit.blob);
+        return canPlay(url).then(function (ok) {
+          if (ok === true) { it.blobUrl = url; it.state = "ready"; it.cached = true; it.total = it.loaded = hit.blob.size; return true; }
+          URL.revokeObjectURL(url); return false;
+        });
+      }).then(function (fromCache) { return fromCache ? null : fetchVideo(it); }).catch(function (err) {
+        if (err && err.fatal) { it.state = "bad"; it.note = err.msg; }
+        else if (it.prepBad) { it.state = "bad"; it.note = it.problem || "link not working"; }
+        else if (it.alt) fallBack(it, err && err.fallback || "Google Drive download failed");
+        else { it.state = "stream"; it.note = "host blocks pre-downloading - will stream live"; }
+      }).then(function () {
+        active--;
+        pump();
+      });
+    }
+
+    function fetchVideo(it) {
       // Give up on a download that receives nothing for 30 seconds
       var ctl = new AbortController(), idle = null;
       function poke() { clearTimeout(idle); idle = setTimeout(function () { ctl.abort(); }, 30000); }
       poke();
-      fetch(it.src, { mode: "cors", credentials: "omit", cache: "no-store", headers: it.hdr || {}, signal: ctl.signal }).then(function (resp) {
+      return fetch(it.src, { mode: "cors", credentials: "omit", cache: "no-store", headers: it.hdr || {}, signal: ctl.signal }).then(function (resp) {
         if (!resp.ok && it.alt) throw { fallback: "Google Drive download refused (HTTP " + resp.status + ")" };
         if (!resp.ok) throw { fatal: true, msg: "HTTP " + resp.status + (resp.status === 401 || resp.status === 403 ? " (not public)" : resp.status === 404 ? " (not found)" : "") };
         it.total = Number(resp.headers.get("Content-Length")) || 0;
@@ -854,21 +941,90 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
           it.total = it.loaded = blob.size;
           // Make sure THIS computer can play it (e.g. iPhone HEVC plays on a Mac but often not on Windows)
           return canPlay(url).then(function (ok) {
-            if (ok === true) { it.blobUrl = url; it.state = "ready"; }
-            else { URL.revokeObjectURL(url); throw { fatal: true, msg: ok }; }
+            if (ok !== true) { URL.revokeObjectURL(url); throw { fatal: true, msg: ok }; }
+            it.blobUrl = url; it.state = "ready";
+            VCACHE.put(it.primary, { blob: blob, team: it.team, saved: Date.now() }).then(showCache);
           });
         });
-      }).catch(function (err) {
-        clearTimeout(idle);
-        if (err && err.fatal) { it.state = "bad"; it.note = err.msg; }
-        else if (it.prepBad) { it.state = "bad"; it.note = it.problem || "link not working"; }
-        else if (it.alt) fallBack(it, err && err.fallback || "Google Drive download failed");
-        else { it.state = "stream"; it.note = "host blocks pre-downloading - will stream live"; }
-      }).then(function () {
-        active--;
-        pump();
+      }).catch(function (err) { clearTimeout(idle); throw err; });
+    }
+
+    // ---------------- videos saved on this computer ----------------
+    // Stored in the browser's own database for pages opened from files (IndexedDB),
+    // shared by every playlist page on this computer, keyed by the video's link.
+    var VCACHE = (function () {
+      var dbp = null;
+      function open() {
+        if (dbp) return dbp;
+        dbp = new Promise(function (res, rej) {
+          try {
+            var r = indexedDB.open("hackathon-videos", 1);
+            r.onupgradeneeded = function () { r.result.createObjectStore("videos"); };
+            r.onsuccess = function () { res(r.result); };
+            r.onerror = function () { rej(r.error); };
+          } catch (e) { rej(e); }
+        });
+        dbp.catch(function () { dbp = null; });
+        return dbp;
+      }
+      function run(mode, fn) {
+        return open().then(function (db) {
+          return new Promise(function (res, rej) {
+            var tx = db.transaction("videos", mode), rq = fn(tx.objectStore("videos"));
+            tx.oncomplete = function () { res(rq ? rq.result : undefined); };
+            tx.onerror = tx.onabort = function () { rej(tx.error); };
+          });
+        });
+      }
+      var asked = false;
+      return {
+        get: function (k) { return run("readonly", function (st) { return st.get(k); }).catch(function () { return null; }); },
+        put: function (k, v) {
+          if (!asked && navigator.storage && navigator.storage.persist) { asked = true; navigator.storage.persist().catch(function () {}); }
+          return run("readwrite", function (st) { st.put(v, k); }).catch(function () {});
+        },
+        all: function () { return run("readonly", function (st) { return st.getAll(); }); },
+        clear: function () { return run("readwrite", function (st) { st.clear(); }); }
+      };
+    })();
+
+    function cacheLocation() {
+      var ua = navigator.userAgent, win = /Windows/.test(ua), mac = /Mac OS X/.test(ua), edge = /Edg\//.test(ua);
+      var profile = win ? (edge ? "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default" : "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default")
+                  : mac ? (edge ? "~/Library/Application Support/Microsoft Edge/Default" : "~/Library/Application Support/Google/Chrome/Default")
+                  : (edge ? "~/.config/microsoft-edge/Default" : "~/.config/google-chrome/Default");
+      var sep = win ? "\\" : "/";
+      return { browser: edge ? "Edge" : "Chrome", folder: profile + sep + "IndexedDB" + sep + "file__0.indexeddb.blob",
+               versionPage: edge ? "edge://version" : "chrome://version" };
+    }
+    function showCache() {
+      var loc = cacheLocation();
+      $("cacheWhere").innerHTML =
+        "Downloaded videos are kept by " + loc.browser + ", so opening a playlist again later doesn't download them again. " +
+        "They are stored in the browser's own storage for pages opened from files, usually in:<br><code>" + esc(loc.folder) + "</code><br>" +
+        "If you use another " + loc.browser + " profile, open <code>" + loc.versionPage + "</code> and use the “Profile path” it shows in place of the part before <code>IndexedDB</code>. " +
+        "The files there are numbered, not named by team, so delete them with the button below rather than by hand.";
+      VCACHE.all().then(function (rows) {
+        var bytes = rows.reduce(function (sum, r) { return sum + (r && r.blob ? r.blob.size : 0); }, 0);
+        $("cacheStats").textContent = rows.length ? rows.length + " video" + (rows.length > 1 ? "s" : "") + ", " + mb(bytes) : "none saved yet";
+        $("cacheClear").disabled = !rows.length;
+        $("cacheClear").dataset.count = rows.length; $("cacheClear").dataset.bytes = bytes;
+      }).catch(function () {
+        $("cacheStats").textContent = "not available";
+        $("cacheWhere").textContent = "This browser isn't letting the page save videos (for example in a private window), so videos are downloaded again each time the page is opened.";
+        $("cacheClear").disabled = true;
       });
     }
+    $("cacheClear").addEventListener("click", function () {
+      var n = Number($("cacheClear").dataset.count || 0), bytes = Number($("cacheClear").dataset.bytes || 0);
+      if (!window.confirm("Delete " + n + " saved video" + (n === 1 ? "" : "s") + " (" + mb(bytes) + ") from this computer?")) return;
+      VCACHE.clear().then(function () {
+        list.forEach(function (it) { it.cached = false; });
+        setMsg("cacheMsg", "ok", "Deleted. Videos already loaded in this tab still play until you close it; next time the page is opened they download again.");
+        showCache(); renderDownloads();
+      }).catch(function (e) { setMsg("cacheMsg", "bad", "Couldn't delete the saved videos: " + esc(e && e.message || e)); });
+    });
+    function setMsg(id, cls, html) { var m = $(id); m.className = "msg " + (cls || ""); m.innerHTML = html; }
 
     // Resolves true, or a message saying why the video can't be shown here
     function canPlay(url) {
@@ -904,7 +1060,7 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
 
     function pillFor(it) {
       switch (it.state) {
-        case "ready":   return '<span class="pill ready">ready &middot; ' + mb(it.total) + '</span>';
+        case "ready":   return '<span class="pill ready">ready &middot; ' + mb(it.total) + (it.cached ? " &middot; saved copy" : "") + '</span>';
         case "loading": return '<span class="pill">' + (it.total ? Math.floor(100 * it.loaded / it.total) + "%" : mb(it.loaded)) + '</span>';
         case "queued":  return '<span class="pill">waiting</span>';
         case "stream":  return '<span class="pill warn" title="' + esc(it.note) + '">streams live</span>';
@@ -1267,6 +1423,7 @@ window.PLAYLIST = /*__PLAYLIST_DATA__*/null;
     });
 
     renderMenu();
+    showCache();
     pump();
     if (list.some(function (it) { return it.youtube; })) loadYtApi();   // get the YouTube player ready early
   }
