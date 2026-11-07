@@ -4,17 +4,20 @@
 # 1. Downloads the form responses (Google Sheet) as CSV
 # 2. Splits submissions into 2 playlists, grouped by task
 #    (all Machine Learning tasks go in the same playlist)
-# 3. Downloads every 45-second video into .\videos so playback has no delays
-# 4. Writes playlists.js (read by player.html) and running-order.txt
+# 3. Checks every video link: is it public, is it really a video, and can a
+#    browser pre-download it (or will it have to stream it live)?
+# 4. Writes one self-contained page per playlist into output\<date-time>\
+#      playlist-1.html, playlist-2.html, running-order.txt
 #
-# Safe to re-run at any time: videos already downloaded are skipped, so a
-# re-run only fetches new / changed submissions.
+# Each playlist page can be copied to any computer. When opened, it downloads
+# only the videos for that playlist. No videos are downloaded by this script.
 #
 # Run it by double-clicking prepare.bat (no installation needed).
 # ---------------------------------------------------------------------------
 
 param(
-    [string]$CsvPath = ""   # optional: use this CSV instead of downloading the sheet
+    [string]$CsvPath = "",    # optional: use this CSV instead of downloading the sheet
+    [switch]$SkipCheck        # optional: don't check the video links
 )
 
 # ============================ SETTINGS =====================================
@@ -37,22 +40,23 @@ $IgnoreTeamPattern = '^\s*(dummy|test)\d*\s*$'
 # ===========================================================================
 
 $ErrorActionPreference = "Stop"
-$ProgressPreference    = "SilentlyContinue"   # makes Invoke-WebRequest much faster
+$ProgressPreference    = "SilentlyContinue"
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 } catch { }
 # Windows PowerShell 5.1 otherwise sometimes writes arrays as {"value":[...],"Count":n}
 Remove-TypeData System.Array -ErrorAction SilentlyContinue
 
-$Root     = Split-Path -Parent $MyInvocation.MyCommand.Path
-$VideoDir  = Join-Path $Root "videos"
+$Root      = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Template  = Join-Path $Root "player-template.html"
 $UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-if (-not (Test-Path $VideoDir)) { New-Item -ItemType Directory -Path $VideoDir | Out-Null }
 
 function Write-Step($msg) { Write-Host ""; Write-Host "== $msg" -ForegroundColor Cyan }
-function Write-Ok($msg)   { Write-Host "   OK   $msg" -ForegroundColor Green }
-function Write-Warn2($msg){ Write-Host "   WARN $msg" -ForegroundColor Yellow }
-function Write-Bad($msg)  { Write-Host "   FAIL $msg" -ForegroundColor Red }
+function Write-Ok($msg)   { Write-Host "   OK     $msg" -ForegroundColor Green }
+function Write-Warn2($msg){ Write-Host "   WARN   $msg" -ForegroundColor Yellow }
+function Write-Bad($msg)  { Write-Host "   FAIL   $msg" -ForegroundColor Red }
+
+if (-not (Test-Path $Template)) { Write-Bad "player-template.html is missing - keep it next to this script."; exit 1 }
 
 function Test-LooksLikeHtml([string]$path) {
     $bytes = New-Object byte[] 64
@@ -62,29 +66,16 @@ function Test-LooksLikeHtml([string]$path) {
     return ($text.StartsWith("<") -or $text.StartsWith("{"))
 }
 
-# Returns "mp4", "webm" or $null (not a recognisable video)
-function Get-VideoKind([string]$path) {
-    $bytes = New-Object byte[] 16
-    $fs = [IO.File]::OpenRead($path)
-    try { $n = $fs.Read($bytes, 0, 16) } finally { $fs.Close() }
-    if ($n -lt 12) { return $null }
-    if ($bytes[0] -eq 0x1A -and $bytes[1] -eq 0x45 -and $bytes[2] -eq 0xDF -and $bytes[3] -eq 0xA3) { return "webm" }
-    $box = [Text.Encoding]::ASCII.GetString($bytes, 4, 4)
-    if (@("ftyp", "moov", "mdat", "free", "wide", "skip") -contains $box) { return "mp4" }
+# Returns "mp4", "webm", "html" or $null for the first bytes of a file
+function Get-ContentKind([byte[]]$bytes, [int]$n) {
+    if ($n -ge 4 -and $bytes[0] -eq 0x1A -and $bytes[1] -eq 0x45 -and $bytes[2] -eq 0xDF -and $bytes[3] -eq 0xA3) { return "webm" }
+    if ($n -ge 8) {
+        $box = [Text.Encoding]::ASCII.GetString($bytes, 4, 4)
+        if (@("ftyp", "moov", "mdat", "free", "wide", "skip") -contains $box) { return "mp4" }
+    }
+    $text = [Text.Encoding]::ASCII.GetString($bytes, 0, $n).TrimStart()
+    if ($text.StartsWith("<") -or $text.StartsWith("{") -or $text.StartsWith("version https://git-lfs")) { return "html" }
     return $null
-}
-
-function Get-ShortHash([string]$text) {
-    $sha = [Security.Cryptography.SHA1]::Create()
-    $hash = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text))
-    return (($hash[0..3] | ForEach-Object { $_.ToString("x2") }) -join "")
-}
-
-function Get-Slug([string]$text) {
-    $s = ($text.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
-    if ($s.Length -gt 40) { $s = $s.Substring(0, 40).Trim('-') }
-    if (-not $s) { $s = "team" }
-    return $s
 }
 
 # Turn a "share" link into a direct-download link where we know how.
@@ -93,14 +84,13 @@ function Resolve-VideoUrl([string]$url) {
     $u = $url.Trim()
     $r = @{ Download = $u; YouTube = $null }
 
-    # YouTube - cannot be downloaded without extra tools; the player embeds it instead
+    # YouTube - cannot be downloaded; the player embeds it instead
     if ($u -match '(?:youtube\.com/(?:watch\?(?:.*&)?v=|shorts/|embed/|live/)|youtu\.be/)([A-Za-z0-9_-]{6,})') {
         $r.Download = $null; $r.YouTube = $Matches[1]; return $r
     }
-    # GitHub "blob" page -> raw file
-    if ($u -match '^https?://(www\.)?github\.com/([^/]+)/([^/]+)/blob/(.+)$') {
-        $path = $Matches[4] -replace '\?.*$', ''
-        $r.Download = "https://github.com/$($Matches[2])/$($Matches[3])/raw/$path"; return $r
+    # GitHub "blob" or "raw" page -> raw.githubusercontent.com (allows browser downloads)
+    if ($u -match '^https?://(?:www\.)?github\.com/([^/]+)/([^/]+)/(?:blob|raw)/([^?#]+)') {
+        $r.Download = "https://raw.githubusercontent.com/$($Matches[1])/$($Matches[2])/$($Matches[3])"; return $r
     }
     # Google Drive file
     if ($u -match 'drive\.google\.com/file/d/([A-Za-z0-9_-]+)' -or
@@ -108,11 +98,10 @@ function Resolve-VideoUrl([string]$url) {
         $u -match 'drive\.usercontent\.google\.com/.*[?&]id=([A-Za-z0-9_-]+)') {
         $r.Download = "https://drive.usercontent.google.com/download?id=$($Matches[1])&export=download&confirm=t"; return $r
     }
-    # Dropbox
-    if ($u -match 'dropbox\.com') {
-        if ($u -match '[?&]dl=0') { $r.Download = $u -replace 'dl=0', 'dl=1' }
-        elseif ($u -notmatch '[?&]dl=1') { $r.Download = $u + $(if ($u.Contains("?")) { "&dl=1" } else { "?dl=1" }) }
-        return $r
+    # Dropbox -> dl.dropboxusercontent.com (allows browser downloads)
+    if ($u -match '^https?://(?:www\.)?dropbox\.com/(.+)$') {
+        $rest = $Matches[1] -replace '([?&])dl=[01]&?', '$1' -replace '[?&]$', ''
+        $r.Download = "https://dl.dropboxusercontent.com/$rest"; return $r
     }
     # OneDrive / SharePoint
     if ($u -match 'sharepoint\.com|1drv\.ms|onedrive\.live\.com') {
@@ -120,6 +109,58 @@ function Resolve-VideoUrl([string]$url) {
         return $r
     }
     return $r
+}
+
+# Fetches only the first few bytes of a video link, the way a browser would.
+# Returns @{ Status = ok|stream|fail; Message; SizeMB }
+#   ok     - public video, and the host lets the player page pre-download it
+#   stream - public video, but the host blocks pre-downloading: the page will
+#            stream it live during judging (needs internet, may buffer)
+#   fail   - not reachable / not public / not a video
+function Test-VideoLink([string]$url) {
+    $resp = $null
+    try {
+        $req = [Net.HttpWebRequest]::Create($url)
+        $req.Method = "GET"
+        $req.UserAgent = $UserAgent
+        $req.AllowAutoRedirect = $true
+        $req.MaximumAutomaticRedirections = 10
+        $req.Timeout = 30000
+        $req.ReadWriteTimeout = 30000
+        $req.AddRange(0, 63)
+        $req.Headers.Add("Origin", "null")   # what a page opened from disk sends
+        $resp = $req.GetResponse()
+
+        $buf = New-Object byte[] 64
+        $stream = $resp.GetResponseStream()
+        $n = 0
+        while ($n -lt 64) { $got = $stream.Read($buf, $n, 64 - $n); if ($got -le 0) { break }; $n += $got }
+
+        $size = $null
+        $cr = $resp.Headers["Content-Range"]
+        if ($cr -and $cr -match '/(\d+)$') { $size = [double]$Matches[1] }
+        elseif ([int]$resp.StatusCode -eq 200 -and $resp.ContentLength -gt 0) { $size = [double]$resp.ContentLength }
+        $sizeMB = $(if ($size) { [Math]::Round($size / 1MB, 1) } else { $null })
+
+        $kind = Get-ContentKind $buf $n
+        if ($kind -eq "html") { return @{ Status = "fail"; Message = "link opens a web page / sign-in page, not a video file (not public, or not a direct link)"; SizeMB = $null } }
+        if (-not $kind) {
+            $ct = "" + $resp.ContentType
+            if ($ct -notmatch '^video/') { return @{ Status = "fail"; Message = "link does not return an mp4/webm video (got '$ct')"; SizeMB = $null } }
+        }
+
+        $acao = "" + $resp.Headers["Access-Control-Allow-Origin"]
+        if ($acao -eq "*" -or $acao -eq "null") { return @{ Status = "ok"; Message = ""; SizeMB = $sizeMB } }
+        return @{ Status = "stream"; Message = "host blocks pre-downloading - will stream live (needs internet)"; SizeMB = $sizeMB }
+    } catch {
+        $msg = $_.Exception.Message
+        if ($_.Exception.InnerException) { $msg = $_.Exception.InnerException.Message }
+        if ($msg -match '\((\d{3})\)\s*([^.]*)') { $msg = "HTTP $($Matches[1]) $($Matches[2])".Trim() }
+        if ($msg -match '40[13]') { $msg += " - the video is not public" }
+        return @{ Status = "fail"; Message = $msg; SizeMB = $null }
+    } finally {
+        if ($resp) { $resp.Close() }
+    }
 }
 
 function Find-Column($row, [string]$pattern) {
@@ -165,7 +206,6 @@ if ($CsvPath) {
 $rows = @(Import-Csv -Path $LocalCsv -Encoding UTF8)
 if ($rows.Count -eq 0) { Write-Bad "The CSV has no submissions."; exit 1 }
 
-$colTime = Find-Column $rows[0] '^Timestamp'
 $colTeam = Find-Column $rows[0] '^Team name'
 $colTask = Find-Column $rows[0] 'task'
 $colVid  = Find-Column $rows[0] '45 second'
@@ -233,97 +273,96 @@ if (-not ($groups | Where-Object { $_.Name -match $MlTaskPattern })) {
 }
 
 # ---------------------------------------------------------------------------
-Write-Step "Downloading videos (already-downloaded videos are skipped)"
+if ($SkipCheck) { Write-Step "Skipping video link checks (-SkipCheck)" }
+else { Write-Step "Checking every video link (only the first few bytes are fetched)" }
 
-$problems = @()
 $items = @{}
+$counts = @{ ok = 0; stream = 0; fail = 0; youtube = 0; unchecked = 0 }
 foreach ($s in ($subs | Sort-Object Order)) {
-    $entry = [ordered]@{ team = $s.Team; task = $s.Task; url = $s.Url; file = $null; youtube = $null; error = $null }
+    $entry = [ordered]@{ team = $s.Team; task = $s.Task; url = $s.Url; src = $null; youtube = $null; check = "unchecked"; problem = $null; sizeMB = $null }
     if (-not $s.Url) {
-        $entry.error = "No video URL submitted"
+        $entry.check = "fail"; $entry.problem = "no video link submitted"
     } else {
         $res = Resolve-VideoUrl $s.Url
         if ($res.YouTube) {
-            $entry.youtube = $res.YouTube
-            Write-Warn2 "$($s.Team): YouTube link - will stream it (needs internet during judging)"
-            $problems += "$($s.Team): YouTube link, streamed live (not pre-downloaded) - $($s.Url)"
+            $entry.youtube = $res.YouTube; $entry.check = "youtube"
+            $entry.problem = "YouTube link - can't be pre-downloaded, will stream live (needs internet)"
         } else {
-            $base = "$(Get-Slug $s.Team)-$(Get-ShortHash $s.Url)"
-            $existing = @(Get-ChildItem -Path $VideoDir -Filter "$base.*" -ErrorAction SilentlyContinue | Where-Object { $_.Extension -ne ".part" -and $_.Length -gt 0 })
-            if ($existing.Count -gt 0) {
-                $entry.file = "videos/" + $existing[0].Name
-                Write-Host "   skip $($s.Team) (already downloaded)"
-            } else {
-                $part = Join-Path $VideoDir "$base.part"
-                try {
-                    Write-Host "   get  $($s.Team) ..." -NoNewline
-                    Invoke-WebRequest -Uri $res.Download -OutFile $part -UseBasicParsing -UserAgent $UserAgent -TimeoutSec 900 -MaximumRedirection 10
-                    $kind = Get-VideoKind $part
-                    if (-not $kind) {
-                        if (Test-LooksLikeHtml $part) { throw "the link returned a web page, not a video file (is it public? is it a direct link?)" }
-                        throw "the downloaded file is not an mp4/webm video"
-                    }
-                    $final = Join-Path $VideoDir "$base.$kind"
-                    Move-Item -Force $part $final
-                    $entry.file = "videos/$base.$kind"
-                    $mb = [Math]::Round((Get-Item $final).Length / 1MB, 1)
-                    Write-Host " $mb MB" -ForegroundColor Green
-                } catch {
-                    Write-Host ""
-                    if (Test-Path $part) { Remove-Item -Force $part }
-                    $entry.error = $_.Exception.Message
-                }
+            $entry.src = $res.Download
+            if (-not $SkipCheck) {
+                $t = Test-VideoLink $res.Download
+                $entry.check = $t.Status; $entry.sizeMB = $t.SizeMB
+                if ($t.Message) { $entry.problem = $t.Message }
             }
         }
     }
-    if ($entry.error) {
-        Write-Bad "$($s.Team): $($entry.error)"
-        $problems += "$($s.Team): $($entry.error) - $($s.Url)"
+    $counts[$entry.check]++
+    $label = "{0}  [{1}]" -f $s.Team, $s.Task
+    switch ($entry.check) {
+        "ok"        { Write-Ok ("{0}{1}" -f $label, $(if ($entry.sizeMB) { "  $($entry.sizeMB) MB" } else { "" })) }
+        "unchecked" { Write-Host "   -      $label" }
+        "fail"      { Write-Bad ("$label`n            $($entry.problem)" + $(if ($s.Url) { "`n            $($s.Url)" } else { "" })) }
+        default     { Write-Warn2 "$label`n            $($entry.problem)" }
     }
     $items[$s.Team.ToLowerInvariant()] = $entry
 }
 
 # ---------------------------------------------------------------------------
-Write-Step "Writing playlists.js and running-order.txt"
+$stamp  = Get-Date -Format "yyyy-MM-dd_HHmm"
+$OutDir = Join-Path $Root "output\$stamp"
+$n = 1
+while (Test-Path $OutDir) { $n++; $OutDir = Join-Path $Root "output\$stamp-$n" }
+New-Item -ItemType Directory -Path $OutDir | Out-Null
 
-$playlists = @()
-$orderLines = @()
-foreach ($n in 1, 2) {
+Write-Step "Writing playlist pages"
+
+$utf8 = New-Object Text.UTF8Encoding($false)
+$templateHtml = [IO.File]::ReadAllText($Template, $utf8)
+$orderLines = @("Generated $(Get-Date -Format 'yyyy-MM-dd HH:mm')", "")
+$generated = (Get-Date).ToString("yyyy-MM-dd HH:mm")
+
+foreach ($p in 1, 2) {
     $list = @()
     foreach ($g in $groups) {
-        if ($assign[$g.Name] -ne $n) { continue }
+        if ($assign[$g.Name] -ne $p) { continue }
         foreach ($s in ($g.Group | Sort-Object Order)) { $list += $items[$s.Team.ToLowerInvariant()] }
     }
-    $tasks = @($groups | Where-Object { $assign[$_.Name] -eq $n } | ForEach-Object { $_.Name })
-    $playlists += [ordered]@{ name = "Playlist $n"; tasks = $tasks; items = $list }
+    $tasks = @($groups | Where-Object { $assign[$_.Name] -eq $p } | ForEach-Object { $_.Name })
+    $data = [ordered]@{ name = "Playlist $p"; generated = $generated; tasks = $tasks; items = $list }
+    $json = (ConvertTo-Json -InputObject $data -Depth 8) -replace '</', '<\/'
 
-    $orderLines += "PLAYLIST $n  ($($list.Count) videos)"
+    $html = $templateHtml.Replace("/*__PLAYLIST_DATA__*/null", $json).Replace("__PLAYLIST_TITLE__", "Playlist $p")
+    $file = Join-Path $OutDir "playlist-$p.html"
+    [IO.File]::WriteAllText($file, $html, $utf8)
+    Write-Ok "playlist-$p.html  ($($list.Count) videos)"
+
+    $orderLines += "PLAYLIST $p  ($($list.Count) videos)"
     $orderLines += ("-" * 60)
     $i = 0; $lastTask = $null
     foreach ($e in $list) {
         $i++
         if ($e.task -ne $lastTask) { $orderLines += ""; $orderLines += "  $($e.task)"; $lastTask = $e.task }
-        $flag = $(if ($e.error) { "   <-- PROBLEM: $($e.error)" } elseif ($e.youtube) { "   (YouTube, streamed)" } else { "" })
+        $flag = $(if ($e.check -eq "fail") { "   <-- PROBLEM: $($e.problem)" } elseif ($e.problem) { "   (note: $($e.problem))" } else { "" })
         $orderLines += ("  {0,3}. {1}{2}" -f $i, $e.team, $flag)
     }
     $orderLines += ""; $orderLines += ""
 }
-
-$data = [ordered]@{ generated = (Get-Date).ToString("yyyy-MM-dd HH:mm"); playlists = $playlists }
-$json = ConvertTo-Json -InputObject $data -Depth 8
-$utf8 = New-Object Text.UTF8Encoding($false)
-[IO.File]::WriteAllText((Join-Path $Root "playlists.js"), "window.PLAYLIST_DATA = $json;`r`n", $utf8)
-[IO.File]::WriteAllText((Join-Path $Root "running-order.txt"), ($orderLines -join "`r`n"), $utf8)
-Write-Ok "playlists.js"
+[IO.File]::WriteAllText((Join-Path $OutDir "running-order.txt"), ($orderLines -join "`r`n"), $utf8)
 Write-Ok "running-order.txt"
 
 Write-Step "Summary"
-if ($problems.Count -gt 0) {
-    Write-Host "   $($problems.Count) submission(s) need attention (also listed in running-order.txt):" -ForegroundColor Yellow
-    foreach ($p in $problems) { Write-Host "    - $p" -ForegroundColor Yellow }
-} else {
-    Write-Ok "All videos downloaded."
+if (-not $SkipCheck) {
+    Write-Host ("   {0} ready to pre-download, {1} will stream live, {2} YouTube (streams), {3} broken" -f $counts.ok, $counts.stream, $counts.youtube, $counts.fail)
+    if ($counts.fail -gt 0) {
+        Write-Host "   Ask the teams marked FAIL for a public, direct mp4 link (e.g. a GitHub repo file)," -ForegroundColor Yellow
+        Write-Host "   then run prepare.bat again." -ForegroundColor Yellow
+    }
+    if ($counts.stream + $counts.youtube -gt 0) {
+        Write-Host "   Videos that stream live need internet during judging and may buffer." -ForegroundColor Yellow
+    }
 }
 Write-Host ""
-Write-Host "   Now open player.html in Chrome or Edge." -ForegroundColor Cyan
+Write-Host "   Playlist pages are in: $OutDir" -ForegroundColor Cyan
+Write-Host "   Copy playlist-1.html / playlist-2.html to the judging computer(s) and open in Chrome or Edge." -ForegroundColor Cyan
 Write-Host ""
+try { Invoke-Item $OutDir } catch { }
